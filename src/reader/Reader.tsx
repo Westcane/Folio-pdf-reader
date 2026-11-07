@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
-import { ArrowLeft, Check, ChevronDown, ChevronUp, FileSearch, Languages, LoaderCircle, Settings2, WifiOff, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type UIEvent } from "react";
+import { ArrowLeft, Check, ChevronDown, ChevronUp, FileSearch, Languages, LoaderCircle, ScanEye, Settings2, WifiOff, X } from "lucide-react";
 import type { Book, ReadingBlock, ReadingProgress, Settings } from "../types";
 import { styledSegments } from "../pdf/textStyle";
 import { blockGap } from "./typography";
@@ -26,6 +26,8 @@ export default function Reader({ book, blocks, settings, online, initialProgress
   const [confirmAll, setConfirmAll] = useState(false);
   const [presentation, setPresentation] = useState(emptyPresentation);
   const [viewReady, setViewReady] = useState(false);
+  const [chromeVisible, setChromeVisible] = useState(true);
+  const lastScrollTop = useRef(0);
   const menu = useRef<HTMLElement>(null);
   const pointer = useRef<{ x: number; y: number; at: number } | undefined>(undefined);
   const hiddenTranslation = useRef<ScrollAnchor | undefined>(undefined);
@@ -86,13 +88,29 @@ export default function Reader({ book, blocks, settings, online, initialProgress
     ])].filter((value) => value !== id) }));
     onBilingual(true);
   };
+  const retranslateParagraph = (block: ReadingBlock) => {
+    flow.capture();
+    onBilingual(true);
+    setPresentation((old) => ({ ...old, collapsed: old.collapsed.filter((value) => value !== block.id) }));
+    void translation.run([block], true);
+  };
+  const handleContentClick = (event: MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement;
+    if (target.closest("button, [role='button'], a, input, select, textarea, summary")) return;
+    setChromeVisible((value) => !value);
+  };
+  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
+    const top = event.currentTarget.scrollTop;
+    if (!flow.busy && top > lastScrollTop.current + 4) setChromeVisible(false);
+    lastScrollTop.current = top;
+  };
   const pending = blocks.filter((block) => translation.results[block.id]?.provider !== translation.status?.provider).length;
   const canTranslate = book.status !== "source-only" && translation.loaded && translation.status?.configured && !translation.job;
   const progress = Math.round(flow.fraction * 100);
   const typography = { "--reading-font-size": `${settings.fontSize}px`, "--reading-leading": settings.lineHeight, "--reading-margin": `${settings.margin}px` } as CSSProperties;
   return (
     <main className="reader scroll-reader" style={typography}>
-      <button className={`reading-capsule${presentation.metaCollapsed ? " collapsed" : ""}`}
+      <button className={`reading-capsule${presentation.metaCollapsed ? " collapsed" : ""}${chromeVisible ? "" : " chrome-hidden"}`}
         aria-label={presentation.metaCollapsed ? "展开书名与页码" : "收起书名与页码"}
         aria-expanded={!presentation.metaCollapsed}
         onClick={() => setPresentation((old) => ({ ...old, metaCollapsed: !old.metaCollapsed }))}>
@@ -101,8 +119,8 @@ export default function Reader({ book, blocks, settings, online, initialProgress
         <span>{presentation.metaCollapsed ? `${progress}%` : `原 PDF ${flow.sourcePage} / ${book.totalPages} · ${progress}%`}</span>
         {presentation.metaCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
       </button>
+      <button className={`back-dock round-tool${chromeVisible ? "" : " chrome-hidden"}`} title="返回书库" aria-label="返回书库" onClick={() => { flow.save(); onBack(); }}><ArrowLeft size={19} /></button>
       <nav className="reader-dock" aria-label="阅读工具">
-        <button className="round-tool" title="返回书库" aria-label="返回书库" onClick={() => { flow.save(); onBack(); }}><ArrowLeft size={19} /></button>
         <button className="round-tool" title="阅读设置" aria-label="阅读设置" onClick={() => { flow.capture(); setPanel(false); onOpenSettings(); }}><Settings2 size={19} /></button>
         <button className={`round-tool${panel ? " active" : ""}${translation.job ? " working" : ""}`} title="翻译" aria-label="翻译" aria-expanded={panel}
           onClick={() => { setPanel((old) => !old); setConfirmAll(false); }}>
@@ -110,6 +128,11 @@ export default function Reader({ book, blocks, settings, online, initialProgress
           {!translation.job && settings.bilingual && <i />}
         </button>
       </nav>
+      <button className="round-tool visible-translate" title="翻译可见区域" aria-label="翻译可见区域"
+        disabled={book.status === "source-only" || !blocks.length || !translation.loaded || !!translation.job}
+        onClick={() => { if (!translation.status?.configured) setPanel(true); else translate(flow.visibleBlocks()); }}>
+        <ScanEye size={19} />
+      </button>
       {panel && (
         <section className="translation-popover" role="dialog" aria-label="DeepSeek 翻译" ref={menu}>
           <header><strong>DeepSeek <small>英 → 中</small></strong><button className="icon-button" aria-label="关闭翻译面板" onClick={() => setPanel(false)}><X size={16} /></button></header>
@@ -130,13 +153,15 @@ export default function Reader({ book, blocks, settings, online, initialProgress
           {book.status !== "ready" && <p className="translation-summary">部分原页需要校对，复杂区域的译文也应对照原 PDF。</p>}
         </section>
       )}
-      <div className="reading-scroll" ref={flow.scroll} aria-label="滚动阅读正文" aria-busy={flow.busy} tabIndex={0}>
+      <div className="reading-scroll" ref={flow.scroll} aria-label="滚动阅读正文" aria-busy={flow.busy} tabIndex={0} onClick={handleContentClick} onScroll={handleScroll}>
         <div className="scroll-column flow-text" ref={flow.column} style={{ height: flow.virtual.getTotalSize() }}>
           {flow.rows.map((row) => {
             const block = blocks[row.index];
             const text = translation.texts[block.id];
             const expanded = !collapsed.has(block.id);
-            const canReveal = !!text && (!settings.bilingual || !expanded);
+            const canCollapse = !!text && settings.bilingual && expanded;
+            const canReveal = !!text && !settings.bilingual;
+            const canRetranslate = !!text && settings.bilingual && !expanded;
             return (
               <article className={`reading-block${block.warning ? " uncertain" : ""}`}
                 key={row.key} ref={flow.virtual.measureElement} data-index={row.index} data-block-id={block.id} data-kind={block.kind}
@@ -146,10 +171,10 @@ export default function Reader({ book, blocks, settings, online, initialProgress
                 </p>
                 <div className="paragraph-action-track"><div className="paragraph-actions" role="toolbar" aria-label="段落操作">
                   <button className="source-ref" aria-label="核对此段原页" title="核对原 PDF" onClick={() => onSource(flow.currentBlock?.id === block.id ? flow.sourcePage : sourcePageForOffset(block, 0), block)}><FileSearch size={16} /></button>
-                  <button className="translate-ref" aria-label={canReveal ? "展开此段译文" : text ? "重新翻译此段" : "翻译此段"}
-                    title={canReveal ? undefined : text ? "重新翻译（再次调用 API）" : "翻译此段"}
+                  <button className="translate-ref" aria-label={canCollapse ? "收起此段译文" : canReveal ? "展开此段译文" : canRetranslate ? "重新翻译此段" : "翻译此段"}
+                    title={canCollapse ? "收起译文" : canReveal ? undefined : canRetranslate ? "重新翻译（再次调用 API）" : "翻译此段"}
                     aria-expanded={text ? settings.bilingual && expanded : undefined}
-                    onClick={() => { if (canReveal) revealParagraph(block.id); else if (!translation.status?.configured) setPanel(true); else translate([block], !!text); }} disabled={!canReveal && (translation.checking || !translation.loaded || !!translation.job)}>
+                    onClick={() => { if (canCollapse) changeFold(block.id, false); else if (canReveal) revealParagraph(block.id); else if (!translation.status?.configured) setPanel(true); else if (canRetranslate) retranslateParagraph(block); else translate([block], false); }} disabled={!canCollapse && !canReveal && (translation.checking || !translation.loaded || !!translation.job)}>
                     <Languages size={16} />
                   </button>
                 </div></div>

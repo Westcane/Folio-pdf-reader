@@ -15,8 +15,8 @@
 }
 .scroll-column {
   position: relative;
-  width: min(820px, calc(100% - max(68px, var(--reading-margin)) - max(88px, var(--reading-margin))));
-  margin-left: max(68px, var(--reading-margin), calc((100% - 820px) / 2));
+  width: min(820px, calc(100% - max(88px, var(--reading-margin)) - max(68px, var(--reading-margin))));
+  margin-left: max(88px, var(--reading-margin), calc((100% - 820px) / 2));
 }
 .reading-block { position: absolute; top: 0; left: 0; width: 100%; }
 .reading-block .source-text { cursor: text; }
@@ -46,7 +46,9 @@
 .reading-capsule strong { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reading-capsule > span { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .reading-capsule.collapsed { width: auto; min-width: 80px; gap: 7px; border-color: transparent; background: var(--veil); }
-.reader-dock { position: absolute; z-index: 8; top: 68px; left: 10px; display: flex; flex-direction: column; gap: 10px; }
+.reading-capsule, .back-dock { transition: opacity 0.18s ease; }
+.reading-capsule.chrome-hidden, .back-dock.chrome-hidden { opacity: 0; pointer-events: none; }
+.reader-dock { position: absolute; z-index: 8; top: 68px; right: 10px; display: flex; flex-direction: column; gap: 10px; }
 .round-tool {
   position: relative;
   width: 44px;
@@ -65,10 +67,12 @@
 }
 .round-tool:hover, .round-tool.active { background: var(--soft); border-color: var(--dashed); }
 .round-tool i { position: absolute; right: 8px; bottom: 7px; width: 4px; height: 4px; background: var(--accent); border-radius: 50%; }
+.back-dock { position: absolute; z-index: 8; top: 3px; left: 10px; }
+.visible-translate { position: absolute; z-index: 8; right: 12px; bottom: max(28px, calc(env(safe-area-inset-bottom) + 8px)); }
 .translation-popover {
   position: absolute;
   z-index: 10;
-  left: 64px;
+  right: 64px;
   top: 68px;
   width: min(310px, calc(100vw - 88px));
   max-height: calc(100% - 90px);
@@ -91,10 +95,11 @@
 .translation-summary { padding: 0 8px; color: var(--muted); font-size: 11px; line-height: 1.7; margin: 10px 0 0; }
 .translation-popover .translation-error { font-size: 12px; padding: 2px 8px; margin: 6px 0; }
 .quiet-link { border: 0; background: none; color: var(--accent); font-size: 12px; padding: 5px 8px; }
-.paragraph-action-track { position: absolute; top: 0; bottom: 0; right: -82px; width: 80px; }
-.paragraph-actions { position: sticky; top: 58px; display: flex; width: 80px; z-index: 3; }
-.paragraph-actions .source-ref, .paragraph-actions .translate-ref { width: 40px; height: 44px; min-height: 44px !important; flex: none; color: var(--muted); padding: 0; border: 0; background: transparent; display: grid; place-items: center; }
-.paragraph-actions button:hover, .paragraph-actions button:focus-visible { color: var(--accent); }
+.paragraph-action-track { position: absolute; top: 0; left: -82px; width: 80px; }
+.paragraph-actions { display: flex; width: 80px; z-index: 3; }
+.paragraph-actions .source-ref, .paragraph-actions .translate-ref { width: 40px; height: 44px; min-height: 44px !important; flex: none; color: var(--muted); padding: 0; border: 0; background: transparent; display: grid; place-items: center; opacity: 0.5; }
+.paragraph-actions button:hover, .paragraph-actions button:focus-visible { color: var(--accent); opacity: 1; }
+.paragraph-actions button:disabled { opacity: 0.35; }
 .paragraph-translation { margin-top: 8px; border-left: 1px solid var(--dashed); padding-left: 16px; }
 .paragraph-translation .translated { font-size: 0.94em; color: var(--accent); cursor: text; }
 .paragraph-translation .translated:focus-visible { outline: 1px solid var(--dashed); outline-offset: 4px; }
@@ -103,12 +108,13 @@
 .scroll-status { position: absolute; bottom: max(14px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); padding: 8px 13px; border-radius: 24px; background: var(--veil); color: var(--muted); font-size: 11px; display: flex; gap: 8px; align-items: center; pointer-events: none; }
 .empty-reading { position: absolute; top: 25%; left: 10%; right: 10%; text-align: center; color: var(--muted); }
 .empty-reading .primary-button { margin: 20px auto; }
-.is-reading .settings-panel { position: absolute; top: 68px; left: 64px; right: auto; max-height: calc(100% - 90px); overflow-y: auto; width: min(310px, calc(100vw - 88px)); }
+.is-reading .settings-panel { position: absolute; top: 68px; right: 64px; left: auto; max-height: calc(100% - 90px); overflow-y: auto; width: min(310px, calc(100vw - 88px)); }
 .is-reading > .error-banner, .is-reading > .notice-banner, .is-reading > .update-banner { position: absolute; left: 68px; right: 16px; bottom: max(14px, env(safe-area-inset-bottom)); z-index: 15; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px #182b2010; padding: 10px 14px; }
 @media (max-width: 600px) {
-  .scroll-column { width: calc(100% - max(60px, var(--reading-margin)) - 80px); margin-left: max(60px, var(--reading-margin)); }
+  .scroll-column { width: calc(100% - max(80px, var(--reading-margin)) - 60px); margin-left: max(80px, var(--reading-margin)); }
   .reading-capsule { width: calc(100% - 90px); left: calc(50% + 22px); gap: 7px; padding: 0 12px; }
   .reading-capsule strong { font-size: 11px; }
   .reading-capsule span { font-size: 10px; }
-  .reader-dock { left: 8px; gap: 8px; }
+  .reader-dock { right: 8px; gap: 8px; }
+  .back-dock { left: 8px; }
 }
