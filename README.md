@@ -69,6 +69,8 @@ Folio **不是万能的 PDF 转换器**。目前尤其需要留意以下情况�
 
 ## 致谢
 
+感谢CODEX。
+
 Folio 使用 **React、TypeScript、Vite、PDF.js** 构建，使用 **IndexedDB** 保存本地书籍及进度，并通过 **PWA / Service Worker** 支持安装与离线资源缓存。
 
 ---
