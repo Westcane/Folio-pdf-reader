@@ -53,7 +53,7 @@ export function fractionForPosition(
   return total && found ? Math.min(1, before / total) : 0;
 }
 
-/** Greedy, measured pages. Only the current page is mounted in the visible reader.
+/** Greedy, measured pages shared by horizontal and vertical reading modes.
  * Offsets use JS/DOM UTF-16 positions; cuts do not split surrogate pairs. */
 export async function paginate(
   blocks: ReadingBlock[],

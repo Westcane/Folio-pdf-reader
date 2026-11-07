@@ -54,6 +54,7 @@ export interface Settings {
   margin: number;
   theme: "light" | "sepia" | "dark";
   bilingual: boolean;
+  readingMode: "scroll" | "horizontal";
 }
 export const defaultSettings: Settings = {
   fontSize: 21,
@@ -61,6 +62,7 @@ export const defaultSettings: Settings = {
   margin: 44,
   theme: "light",
   bilingual: false,
+  readingMode: "scroll",
 };
 export interface PageFragment {
   blockId: string;

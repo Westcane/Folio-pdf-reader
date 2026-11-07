@@ -111,6 +111,7 @@ export function normalizeSettings(value: unknown): Settings {
       ? source.theme!
       : defaultSettings.theme,
     bilingual: source.bilingual === true,
+    readingMode: source.readingMode === "horizontal" ? "horizontal" : "scroll",
   };
 }
 export function storageError(error: unknown): string {

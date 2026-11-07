@@ -1,4 +1,4 @@
-import type { ReadingBlock, ReadingPosition } from "../types";
+import type { ReadingPosition } from "../types";
 
 export interface ScrollAnchor { position: ReadingPosition; inset: number }
 export const READING_GUIDE = 58;
@@ -40,25 +40,24 @@ export function captureScrollAnchor(scroller: HTMLElement): ScrollAnchor | undef
   // Store the first character of the current visual line, preserving inline emphasis offsets.
   const rect = characterRect(element, low) ?? element.getBoundingClientRect();
   const translated = element.dataset.readingText === "translation";
+  const start = Number(element.dataset.start ?? 0);
   const sourceLength = Number(element.dataset.sourceLength ?? length);
   return {
-    position: { blockId: element.dataset.blockId!, offset: translated ? Math.max(0, sourceLength - 1) : low,
-      ...(translated ? { translationOffset: low } : {}) },
-    inset: Math.min(120, Math.max(-100, rect.top - guide)),
+    position: { blockId: element.dataset.blockId!, offset: translated ? Math.max(0, sourceLength - 1) : start + low,
+      ...(translated ? { translationOffset: start + low } : {}) },
+    inset: rect.top - guide,
   };
 }
 export function anchorRect(scroller: HTMLElement, position: ReadingPosition): DOMRect | undefined {
   const elements = [...scroller.querySelectorAll<HTMLElement>("[data-reading-text]")];
   const translated = position.translationOffset !== undefined;
-  const element = elements.find((node) => node.dataset.blockId === position.blockId && node.dataset.readingText === (translated ? "translation" : "source") && node.getBoundingClientRect().height > 0)
+  const offset = position.translationOffset ?? position.offset;
+  const element = elements.find((node) => {
+    const start = Number(node.dataset.start ?? 0);
+    return node.dataset.blockId === position.blockId && node.dataset.readingText === (translated ? "translation" : "source")
+      && start <= offset && offset < start + (node.textContent?.length ?? 0) && node.getBoundingClientRect().height > 0;
+  })
     ?? elements.find((node) => node.dataset.blockId === position.blockId && node.dataset.readingText === "source");
   if (!element) return;
-  return characterRect(element, element.dataset.readingText === "translation" ? position.translationOffset ?? 0 : position.offset);
-}
-
-export function estimateBlockHeight(block: ReadingBlock, width: number, fontSize: number, leading: number, translation?: string, collapsed = false): number {
-  const columns = Math.max(8, width / (fontSize * 0.51));
-  const source = Math.max(1, Math.ceil(block.text.length / columns)) * fontSize * leading;
-  const chinese = translation && !collapsed ? Math.ceil(translation.length / Math.max(6, width / (fontSize * 0.94))) * fontSize * leading : 0;
-  return source + chinese + (translation ? 34 : 0) + fontSize * 1.2;
+  return characterRect(element, (element.dataset.readingText === "translation" ? position.translationOffset ?? 0 : position.offset) - Number(element.dataset.start ?? 0));
 }

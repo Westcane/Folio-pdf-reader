@@ -45,7 +45,6 @@ import {
 const DebugPanel = import.meta.env.DEV
   ? lazy(() => import("./dev/DebugPanel"))
   : null;
-const SourceViewer = lazy(() => import("./reader/SourceViewer"));
 type OpenBook = {
   book: Book;
   blocks: ReadingBlock[];
@@ -57,10 +56,6 @@ export default function App() {
     [opened, setOpened] = useState<OpenBook>();
   const [settings, setSettings] = useState<Settings>(defaultSettings),
     [showSettings, setShowSettings] = useState(false);
-  const [source, setSource] = useState<{
-    page: number;
-    block?: ReadingBlock;
-  }>();
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [ready, setReady] = useState(false);
@@ -166,7 +161,6 @@ export default function App() {
   useEffect(() => {
     const escape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setSource(undefined);
         setShowSettings(false);
       }
     };
@@ -202,11 +196,11 @@ export default function App() {
       });
       if (result.book.status === "source-only")
         setNotice(
-          "没有提取到文字：这可能是扫描 PDF。本版本不含 OCR，请使用“原页校对”查看原始页面。",
+          "没有提取到文字：这可能是扫描 PDF。本版本不含 OCR，请在外部阅读器查看，或先完成 OCR 再导入。",
         );
       else if (result.book.status === "review")
         setNotice(
-          "部分页面需要校对。图表、公式或复杂排版可能无法正确重排，请通过段落旁的原页图标核对。",
+          "图表、公式或复杂排版可能无法正确重排，建议在外部阅读器中对照原文件核验。",
         );
       else if (existing) setNotice("已重新导入相同文件，并保留原有阅读进度。");
     } catch (e) {
@@ -231,14 +225,9 @@ export default function App() {
     },
     [reportError],
   );
-  const handleSource = useCallback(
-    (page: number, block?: ReadingBlock) => setSource({ page, block }),
-    [],
-  );
   const leaveReader = () => {
     setOpened(undefined);
     setShowSettings(false);
-    setSource(undefined);
     void db.settings.delete("lastBook").catch(reportError);
     void refreshBooks().catch(reportError);
   };
@@ -278,7 +267,7 @@ export default function App() {
                 <BookOpen size={23} />
               </span>
               <span>
-                folio<span className="brand-dot">.</span>
+                Folio<span className="brand-dot">.</span>
               </span>
             </a>
             <div className="header-note">
@@ -336,13 +325,15 @@ export default function App() {
       {opened ? (
         <>
           {showSettings && (
+            <>
+            <div className="settings-dismiss" aria-hidden="true" onClick={(event) => { event.stopPropagation(); setShowSettings(false); }} />
             <section
               className="settings-panel"
               role="dialog"
               aria-label="阅读设置面板"
             >
               <header>
-                <strong>让阅读更舒适</strong>
+                <strong>阅读设置</strong>
                 <button
                   className="icon-button"
                   aria-label="关闭阅读设置"
@@ -351,6 +342,10 @@ export default function App() {
                   <X size={18} />
                 </button>
               </header>
+              <div className="reading-mode-options" role="group" aria-label="翻页方式">
+                <button aria-pressed={settings.readingMode === "horizontal"} onClick={() => setSettings((old) => ({ ...old, readingMode: "horizontal" }))}>左右翻页</button>
+                <button aria-pressed={settings.readingMode === "scroll"} onClick={() => setSettings((old) => ({ ...old, readingMode: "scroll" }))}>滚动翻页</button>
+              </div>
               <label>
                 字号 <output>{settings.fontSize}px</output>
                 <input
@@ -421,20 +416,8 @@ export default function App() {
                   </button>
                 ))}
               </div>
-              <label className="bilingual-toggle">
-                <span>
-                  英中双语 · DeepSeek
-                  <small>也可从侧面翻译菜单统一收起或展开</small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={settings.bilingual}
-                  onChange={(e) =>
-                    setSettings((s) => ({ ...s, bilingual: e.target.checked }))
-                  }
-                />
-              </label>
             </section>
+            </>
           )}
           <Reader
             key={opened.book.id}
@@ -445,22 +428,12 @@ export default function App() {
             onBack={leaveReader}
             onOpenSettings={() => setShowSettings((value) => !value)}
             onBilingual={(bilingual) => setSettings((value) => ({ ...value, bilingual }))}
+            settingsOpen={showSettings}
             initialProgress={opened.progress}
             onProgress={handleProgress}
-            onSource={handleSource}
             onState={setReaderState}
             onError={reportError}
           />
-          {source && (
-            <Suspense fallback={<span className="scroll-status">正在加载原页…</span>}>
-            <SourceViewer
-              book={opened.book}
-              initialPage={source.page}
-              block={source.block}
-              onClose={() => setSource(undefined)}
-            />
-            </Suspense>
-          )}
         </>
       ) : (
         <main className="library">
@@ -469,14 +442,14 @@ export default function App() {
               <span /> YOUR PERSONAL READING SPACE
             </div>
             <h1>
-              你的书，
+              Folio，
               <br className="mobile-break" />
-              重新展开<span>。</span>
+              你的阅读空间<span>。</span>
             </h1>
             <p>
-              让固定的 PDF，变成适合你的阅读节奏。
+              只是一个阅读器。
               <br />
-              本地导入，自由重排，随时接着读。
+              本地导入，语言翻译，随时接着读。
             </p>
             <div className="intro-rule" />
           </section>
@@ -501,7 +474,7 @@ export default function App() {
               <span className="import-icon">
                 <FilePlus2 size={28} strokeWidth={1.4} />
               </span>
-              <strong>把下一本好书带进来</strong>
+              <strong>导入pdf</strong>
               <span>选择或拖入文字型 PDF · 最大 50 MB / 300 页</span>
               <span className="dropzone-action">
                 选择 PDF 文件 <Plus size={16} />
@@ -521,14 +494,14 @@ export default function App() {
                       <span className={`book-cover cover-${i % 3}`}>
                         <span>PDF</span>
                         <BookOpen size={30} strokeWidth={1.1} />
-                        <small>FOLIO LIBRARY</small>
+                        <small>Folio LIBRARY</small>
                       </span>
                       <span className="book-info">
                         <small>
                           {book.status === "ready"
-                            ? "可以重排阅读"
+                            ? "Folio"
                             : book.status === "source-only"
-                              ? "扫描文档 · 原页阅读"
+                              ? "扫描文档 · 无可重排文字"
                               : "已导入 · 部分页面待校对"}
                         </small>
                         <strong>{book.name}</strong>
@@ -591,7 +564,7 @@ export default function App() {
             </div>
           </section>
           <footer className="library-footer">
-            <span>FOLIO · A LITTLE SPACE TO READ</span>
+            <span>Folio · A LITTLE SPACE TO READ</span>
             <span>
               {offlineReady
                 ? "应用外壳已可离线"

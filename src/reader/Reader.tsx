@@ -1,48 +1,52 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type UIEvent } from "react";
-import { ArrowLeft, Check, ChevronDown, ChevronUp, FileSearch, Languages, LoaderCircle, ScanEye, Settings2, WifiOff, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { ArrowLeft, Check, Languages, LoaderCircle, ScanEye, Settings2, X } from "lucide-react";
 import type { Book, ReadingBlock, ReadingProgress, Settings } from "../types";
 import { styledSegments } from "../pdf/textStyle";
-import { blockGap } from "./typography";
-import { sourcePageForOffset } from "./sourceLocation";
 import { useTranslations } from "../translation/useTranslations";
-import { useScrollReader, type ReaderState } from "./useScrollReader";
+import { usePagedReader, type ReaderState } from "./usePagedReader";
 import { db } from "../storage/db";
-import type { ScrollAnchor } from "./scrollPosition";
+import { useFloatingTranslation } from "./useFloatingTranslation";
+import { useReadingChrome } from "./useReadingChrome";
+import { useReadingGestures } from "./useReadingGestures";
+import { ReadingHeader } from "./ReadingHeader";
 import "./reader.css";
 
-export type { ReaderState } from "./useScrollReader";
+export type { ReaderState } from "./usePagedReader";
 interface Props {
   book: Book; blocks: ReadingBlock[]; settings: Settings; online: boolean;
   initialProgress?: ReadingProgress;
   onProgress: (progress: ReadingProgress) => void;
-  onSource: (page: number, block?: ReadingBlock) => void;
   onState: (state: ReaderState) => void; onError: (error: unknown) => void;
   onBack: () => void; onOpenSettings: () => void;
   onBilingual: (enabled: boolean) => void;
+  settingsOpen: boolean;
 }
-const emptyPresentation = { collapsed: [] as string[], metaCollapsed: false };
-export default function Reader({ book, blocks, settings, online, initialProgress, onProgress, onSource, onState, onError, onBack, onOpenSettings, onBilingual }: Props) {
+const emptyPresentation = { collapsed: [] as string[] };
+export default function Reader({ book, blocks, settings, online, initialProgress, onProgress, onState, onError, onBack, onOpenSettings, onBilingual, settingsOpen }: Props) {
   const [panel, setPanel] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
   const [presentation, setPresentation] = useState(emptyPresentation);
   const [viewReady, setViewReady] = useState(false);
-  const [chromeVisible, setChromeVisible] = useState(true);
-  const lastScrollTop = useRef(0);
+  const [seeking, setSeeking] = useState(false);
+  const chrome = useReadingChrome(panel || settingsOpen || seeking);
+  const [selectedBlock, setSelectedBlock] = useState<string>();
+  const [pageBatch, setPageBatch] = useState<string[]>([]);
+  const pageBatchNavigation = useRef(-1);
   const menu = useRef<HTMLElement>(null);
-  const pointer = useRef<{ x: number; y: number; at: number } | undefined>(undefined);
-  const hiddenTranslation = useRef<ScrollAnchor | undefined>(undefined);
   const translation = useTranslations(book, true);
+  const floating = useFloatingTranslation();
+  const blocksById = useMemo(() => new Map(blocks.map((block) => [block.id, block])), [blocks]);
   const collapsed = useMemo(() => new Set(presentation.collapsed), [presentation.collapsed]);
-  const flow = useScrollReader({ book, blocks, settings, initialProgress,
+  const flow = usePagedReader({ book, blocks, settings, initialProgress,
     translations: translation.texts, collapsed,
-    presentationReady: viewReady && (!settings.bilingual || translation.loaded || !!translation.error), onProgress, onState });
+    presentationReady: viewReady && (!settings.bilingual || translation.loaded || !!translation.error), onProgress, onState, onError });
 
   useEffect(() => {
     let live = true;
     void db.settings.get(`view:${book.id}`).then((row) => {
       if (!live) return;
       const value = row?.value as Partial<typeof emptyPresentation> | undefined;
-      setPresentation({ collapsed: Array.isArray(value?.collapsed) ? value.collapsed.filter((id) => typeof id === "string") : [], metaCollapsed: value?.metaCollapsed === true });
+      setPresentation({ collapsed: Array.isArray(value?.collapsed) ? value.collapsed.filter((id) => typeof id === "string") : [] });
       setViewReady(true);
     }).catch((error) => { if (live) { setViewReady(true); onError(error); } });
     return () => { live = false; };
@@ -64,29 +68,45 @@ export default function Reader({ book, blocks, settings, online, initialProgress
     setPresentation((old) => ({ ...old, collapsed: open ? old.collapsed.filter((value) => value !== id) : [...new Set([...old.collapsed, id])] }));
   }, [flow.capture]);
   const revealAll = () => {
-    const current = flow.capture();
-    if (settings.bilingual) { hiddenTranslation.current = current; onBilingual(false); }
-    else {
-      if (hiddenTranslation.current?.position.blockId === current.position.blockId) flow.restoreAnchor(hiddenTranslation.current);
-      setPresentation((old) => ({ ...old, collapsed: [] })); onBilingual(true);
-    }
+    flow.capture();
+    if (!settings.bilingual) setPresentation({ collapsed: [] });
+    onBilingual(!settings.bilingual);
   };
   const translate = (selected: ReadingBlock[], force = false) => {
     flow.capture(); onBilingual(true); setConfirmAll(false);
     void translation.run(selected, force);
   };
-  const collapseTranslation = (event: MouseEvent, blockId: string) => {
-    const start = pointer.current; pointer.current = undefined;
-    if (window.getSelection()?.toString()) return;
-    if (event.detail !== 0 && (!start || Date.now() - start.at > 350 || Math.hypot(event.clientX - start.x, event.clientY - start.y) > 9)) return;
-    changeFold(blockId, false);
-  };
-  const revealParagraph = (id: string) => {
+  const revealBlocks = (ids: string[]) => {
     flow.capture();
     setPresentation((old) => ({ ...old, collapsed: [...new Set([
       ...old.collapsed, ...(!settings.bilingual ? Object.keys(translation.texts) : []),
-    ])].filter((value) => value !== id) }));
+    ])].filter((value) => !ids.includes(value)) }));
     onBilingual(true);
+  };
+  const toggleVisiblePage = () => {
+    if (floating.consumeDrag() || book.status === "source-only" || !translation.loaded || translation.job) return;
+    const visible = flow.visibleBlocks();
+    if (!visible.length) return;
+    // Reflow keeps the selected batch; an intentional page turn starts a new page batch.
+    const samePage = pageBatch.length > 0 && pageBatchNavigation.current === flow.navigation;
+    const ids = samePage ? pageBatch : visible.map((block) => block.id);
+    if (!samePage) { setPageBatch(ids); pageBatchNavigation.current = flow.navigation; }
+    if ((samePage || ids.every((id) => translation.texts[id])) && ids.some((id) => settings.bilingual && translation.texts[id] && !collapsed.has(id))) {
+      flow.capture();
+      setPresentation((old) => ({ ...old, collapsed: [...new Set([...old.collapsed, ...ids])] }));
+      return;
+    }
+    if (samePage && ids.some((id) => translation.texts[id])) {
+      // Expanding a completed/partially completed batch never retries paid requests.
+      revealBlocks(ids);
+      return;
+    }
+    revealBlocks(ids);
+    const missing = blocks.filter((block) => ids.includes(block.id) && !translation.texts[block.id]);
+    if (missing.length) {
+      if (!translation.status?.configured) setPanel(true);
+      else translate(missing);
+    }
   };
   const retranslateParagraph = (block: ReadingBlock) => {
     flow.capture();
@@ -94,53 +114,65 @@ export default function Reader({ book, blocks, settings, online, initialProgress
     setPresentation((old) => ({ ...old, collapsed: old.collapsed.filter((value) => value !== block.id) }));
     void translation.run([block], true);
   };
-  const handleContentClick = (event: MouseEvent<HTMLDivElement>) => {
-    const target = event.target as HTMLElement;
-    if (target.closest("button, [role='button'], a, input, select, textarea, summary")) return;
-    setChromeVisible((value) => !value);
+  const toggleParagraph = (id: string) => {
+    const block = blocksById.get(id);
+    if (!block || flow.busy) return;
+    setSelectedBlock(id);
+    if (translation.texts[id]) {
+      if (settings.bilingual && !collapsed.has(id)) changeFold(id, false);
+      else revealBlocks([id]);
+    } else if (!translation.job && translation.loaded) {
+      if (!translation.status?.configured) setPanel(true);
+      else { revealBlocks([id]); translate([block], false); }
+    }
   };
-  const handleScroll = (event: UIEvent<HTMLDivElement>) => {
-    const top = event.currentTarget.scrollTop;
-    if (!flow.busy && top > lastScrollTop.current + 4) setChromeVisible(false);
-    lastScrollTop.current = top;
-  };
-  const pending = blocks.filter((block) => translation.results[block.id]?.provider !== translation.status?.provider).length;
+  const gestures = useReadingGestures((target, x) => {
+    if (flow.busy) return;
+    if (settings.readingMode === "horizontal") {
+      if (x < 0.14) { flow.go(-1); return; }
+      if (x > 0.86) { flow.go(1); return; }
+    }
+    const source = target.closest<HTMLElement>(".source-text[data-block-id]");
+    if (source?.dataset.blockId) toggleParagraph(source.dataset.blockId);
+  }, chrome.toggle);
+  const pending = blocks.filter((block) => !translation.results[block.id]).length;
+  const retranslateTarget = selectedBlock ? blocksById.get(selectedBlock) ?? flow.currentBlock : flow.currentBlock;
   const canTranslate = book.status !== "source-only" && translation.loaded && translation.status?.configured && !translation.job;
-  const progress = Math.round(flow.fraction * 100);
+  const samePageBatch = pageBatchNavigation.current === flow.navigation;
+  const pageExpanded = samePageBatch && pageBatch.some((id) => settings.bilingual && translation.texts[id] && !collapsed.has(id));
+  const pageButtonLabel = pageExpanded ? "收起翻译" : samePageBatch && pageBatch.some((id) => translation.texts[id]) ? "展开翻译" : "一页翻译";
   const typography = { "--reading-font-size": `${settings.fontSize}px`, "--reading-leading": settings.lineHeight, "--reading-margin": `${settings.margin}px` } as CSSProperties;
   return (
-    <main className="reader scroll-reader" style={typography}>
-      <button className={`reading-capsule${presentation.metaCollapsed ? " collapsed" : ""}${chromeVisible ? "" : " chrome-hidden"}`}
-        aria-label={presentation.metaCollapsed ? "展开书名与页码" : "收起书名与页码"}
-        aria-expanded={!presentation.metaCollapsed}
-        onClick={() => setPresentation((old) => ({ ...old, metaCollapsed: !old.metaCollapsed }))}>
-        {!presentation.metaCollapsed && <strong>{book.name.replace(/\.pdf$/i, "")}</strong>}
-        {!online && <WifiOff size={12} aria-label="离线" />}
-        <span>{presentation.metaCollapsed ? `${progress}%` : `原 PDF ${flow.sourcePage} / ${book.totalPages} · ${progress}%`}</span>
-        {presentation.metaCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
-      </button>
-      <button className={`back-dock round-tool${chromeVisible ? "" : " chrome-hidden"}`} title="返回书库" aria-label="返回书库" onClick={() => { flow.save(); onBack(); }}><ArrowLeft size={19} /></button>
-      <nav className="reader-dock" aria-label="阅读工具">
-        <button className="round-tool" title="阅读设置" aria-label="阅读设置" onClick={() => { flow.capture(); setPanel(false); onOpenSettings(); }}><Settings2 size={19} /></button>
+    <main className={`reader paged-reader mode-${settings.readingMode}${chrome.visible ? "" : " chrome-quiet"}`} style={typography}
+      onPointerDownCapture={chrome.activity} onKeyDownCapture={chrome.activity}>
+      <ReadingHeader title={book.name.replace(/\.pdf$/i, "")} online={online} visible={chrome.visible} page={flow.index + 1} pages={flow.pages.length}
+        busy={flow.busy} onShow={chrome.show} onSeek={flow.seek} onSeeking={setSeeking} />
+      <button className={`back-dock round-tool${chrome.visible ? "" : " chrome-hidden"}`} title="返回书库" aria-label="返回书库" onClick={() => { flow.save(); onBack(); }}><ArrowLeft size={19} /></button>
+      <nav className={`reader-dock${chrome.visible ? "" : " chrome-hidden"}`} aria-label="阅读工具">
+        <button className="round-tool" title="阅读设置" aria-label="阅读设置" onClick={() => { flow.capture(); setPanel(false); onOpenSettings(); }}><Settings2 size={21} /></button>
         <button className={`round-tool${panel ? " active" : ""}${translation.job ? " working" : ""}`} title="翻译" aria-label="翻译" aria-expanded={panel}
           onClick={() => { setPanel((old) => !old); setConfirmAll(false); }}>
           {translation.job ? <LoaderCircle size={19} className="spin" /> : <Languages size={19} />}
           {!translation.job && settings.bilingual && <i />}
         </button>
       </nav>
-      <button className="round-tool visible-translate" title="翻译可见区域" aria-label="翻译可见区域"
-        disabled={book.status === "source-only" || !blocks.length || !translation.loaded || !!translation.job}
-        onClick={() => { if (!translation.status?.configured) setPanel(true); else translate(flow.visibleBlocks()); }}>
-        <ScanEye size={19} />
+      <button className={`round-tool visible-translate${floating.dragging ? " dragging" : ""}`} aria-label={pageButtonLabel} aria-expanded={pageExpanded}
+        style={floating.position ? { left: floating.position.x, top: floating.position.y, right: "auto", bottom: "auto" } : undefined}
+        aria-disabled={book.status === "source-only" || !blocks.length || !translation.loaded || !!translation.job}
+        onPointerDown={floating.onPointerDown} onPointerMove={floating.onPointerMove} onPointerUp={floating.onPointerUp} onPointerCancel={floating.onPointerCancel}
+        onContextMenu={(event) => event.preventDefault()}
+        onClick={toggleVisiblePage}>
+        <ScanEye size={22} />
       </button>
       {panel && (
-        <section className="translation-popover" role="dialog" aria-label="DeepSeek 翻译" ref={menu}>
-          <header><strong>DeepSeek <small>英 → 中</small></strong><button className="icon-button" aria-label="关闭翻译面板" onClick={() => setPanel(false)}><X size={16} /></button></header>
+        <section className="translation-popover" role="dialog" aria-label="翻译设置" ref={menu}>
+          <header><strong>翻译设置 <small>DeepSeek</small></strong><button className="icon-button" aria-label="关闭翻译面板" onClick={() => setPanel(false)}><X size={16} /></button></header>
           <button className="translation-menu-item" onClick={revealAll} aria-pressed={settings.bilingual}>
             <span>{settings.bilingual ? "收起全部译文" : "展开全部译文"}</span>{settings.bilingual && <Check size={15} />}
           </button>
           <div className="popover-rule" />
-          <button className="translation-menu-item" disabled={!canTranslate || !blocks.length} onClick={() => translate(flow.visibleBlocks())}>翻译可见段落 <small>跳过已有译文</small></button>
+          <button className="translation-menu-item" disabled={!canTranslate || !blocks.length} onClick={toggleVisiblePage}>{pageButtonLabel}</button>
+          <button className="translation-menu-item" disabled={!canTranslate || !retranslateTarget} onClick={() => retranslateTarget && retranslateParagraph(retranslateTarget)}>重新翻译当前段</button>
           <button className={`translation-menu-item${confirmAll ? " confirm" : ""}`} disabled={!canTranslate || !pending}
             onClick={() => confirmAll ? translate(blocks) : setConfirmAll(true)}>
             {confirmAll ? `确认翻译剩余 ${pending} 段` : "翻译全文"}<small>{confirmAll ? "将逐段发送原文并调用付费 API" : `${pending} 段待译 · 按段缓存`}</small>
@@ -148,53 +180,38 @@ export default function Reader({ book, blocks, settings, online, initialProgress
           {translation.job && <button className="translation-menu-item" onClick={translation.cancel}>停止翻译 <small>已保存的译文保留</small></button>}
           <div className="popover-rule" />
           <p className="translation-summary" aria-live="polite">{translation.job ? `正在翻译 ${translation.job.done + 1} / ${translation.job.total} 段` : `本书已缓存 ${Object.keys(translation.results).length} 段译文`}</p>
+          <p className="translation-summary">缓存不自动过期；删书或清理网站数据会移除缓存。</p>
           {translation.error && <p className="translation-error" role="alert">{translation.error}</p>}
           <button className="quiet-link" disabled={translation.checking || !!translation.job} onClick={() => void translation.check()}>{translation.checking ? "连接中…" : "检查连接"}</button>
           {book.status !== "ready" && <p className="translation-summary">部分原页需要校对，复杂区域的译文也应对照原 PDF。</p>}
         </section>
       )}
-      <div className="reading-scroll" ref={flow.scroll} aria-label="滚动阅读正文" aria-busy={flow.busy} tabIndex={0} onClick={handleContentClick} onScroll={handleScroll}>
-        <div className="scroll-column flow-text" ref={flow.column} style={{ height: flow.virtual.getTotalSize() }}>
+      <div className="reading-scroll" ref={flow.scroll} aria-label="阅读正文" aria-busy={flow.busy} tabIndex={0} data-page-count={flow.pages.length} data-page-index={flow.index}
+        {...gestures}>
+        <div className="paged-column flow-text" ref={flow.column} style={{ height: flow.virtual.getTotalSize() }}>
           {flow.rows.map((row) => {
-            const block = blocks[row.index];
-            const text = translation.texts[block.id];
-            const expanded = !collapsed.has(block.id);
-            const canCollapse = !!text && settings.bilingual && expanded;
-            const canReveal = !!text && !settings.bilingual;
-            const canRetranslate = !!text && settings.bilingual && !expanded;
+            const page = flow.pages[row.index];
             return (
-              <article className={`reading-block${block.warning ? " uncertain" : ""}`}
-                key={row.key} ref={flow.virtual.measureElement} data-index={row.index} data-block-id={block.id} data-kind={block.kind}
-                style={{ transform: `translateY(${row.start}px)`, paddingBottom: blockGap(block.kind, blocks[row.index + 1]?.kind ?? "paragraph", settings.fontSize) }}>
-                <p className={`text-block source-text kind-${block.kind}`} lang="en" data-reading-text="source" data-block-id={block.id}>
-                  {styledSegments(block.text, block.styles).map((segment, index) => <span key={index} style={{ fontWeight: segment.bold ? 700 : undefined, fontStyle: segment.italic ? "italic" : undefined }}>{segment.text}</span>)}
-                </p>
-                <div className="paragraph-action-track"><div className="paragraph-actions" role="toolbar" aria-label="段落操作">
-                  <button className="source-ref" aria-label="核对此段原页" title="核对原 PDF" onClick={() => onSource(flow.currentBlock?.id === block.id ? flow.sourcePage : sourcePageForOffset(block, 0), block)}><FileSearch size={16} /></button>
-                  <button className="translate-ref" aria-label={canCollapse ? "收起此段译文" : canReveal ? "展开此段译文" : canRetranslate ? "重新翻译此段" : "翻译此段"}
-                    title={canCollapse ? "收起译文" : canReveal ? undefined : canRetranslate ? "重新翻译（再次调用 API）" : "翻译此段"}
-                    aria-expanded={text ? settings.bilingual && expanded : undefined}
-                    onClick={() => { if (canCollapse) changeFold(block.id, false); else if (canReveal) revealParagraph(block.id); else if (!translation.status?.configured) setPanel(true); else if (canRetranslate) retranslateParagraph(block); else translate([block], false); }} disabled={!canCollapse && !canReveal && (translation.checking || !translation.loaded || !!translation.job)}>
-                    <Languages size={16} />
-                  </button>
-                </div></div>
-                {settings.bilingual && text && expanded && (
-                  <div className="paragraph-translation">
-                    <p className={`text-block translated kind-${block.kind}`} lang="zh-CN" data-reading-text="translation" data-block-id={block.id} data-source-length={block.text.length}
-                      role="button" tabIndex={0} aria-expanded="true"
-                      onPointerDown={(event) => { pointer.current = { x: event.clientX, y: event.clientY, at: Date.now() }; }}
-                      onPointerCancel={() => { pointer.current = undefined; }}
-                      onClick={(event) => collapseTranslation(event, block.id)}
-                      onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && !window.getSelection()?.toString()) { event.preventDefault(); changeFold(block.id, false); } }}>{text}</p>
+              <section className="reading-page" key={row.key} data-page-number={row.index + 1} data-current={row.index === flow.index} style={{ height: flow.pageHeight, transform: `translateY(${row.start}px)` }}>
+                <div className="page-content page-typesetting">
+                {page.fragments.map((fragment, part) => (
+                  <div className="reading-fragment" key={`${fragment.blockId}-${fragment.start}-${part}`} data-block-id={fragment.blockId} data-start={fragment.start} data-translated={fragment.translated || undefined} style={{ paddingTop: fragment.gapBefore ?? 0 }}>
+                    <p className={`text-block ${fragment.translated ? "translated" : "source-text"} kind-${fragment.kind}`}
+                      lang={fragment.translated ? "zh-CN" : "en"} data-reading-text={fragment.translated ? "translation" : "source"} data-block-id={fragment.blockId}
+                      data-start={fragment.start} data-source-length={blocksById.get(fragment.blockId)?.text.length}>
+                      {styledSegments(fragment.text, fragment.styles).map((segment, index) => <span key={index} style={{ fontWeight: segment.bold ? 700 : undefined, fontStyle: segment.italic ? "italic" : undefined }}>{segment.text}</span>)}
+                    </p>
                   </div>
-                )}
-              </article>
+                ))}
+                </div>
+              </section>
             );
           })}
         </div>
-        {(!blocks.length || book.status === "source-only") && <div className="empty-reading"><FileSearch size={28} /><p>未提取到可重排文字，请查看原始 PDF。</p><button className="primary-button" onClick={() => onSource(1)}>查看原 PDF</button></div>}
+        {(!blocks.length || book.status === "source-only") && <div className="empty-reading"><p>这份 PDF 没有可重排文字。请在外部阅读器查看，或先完成 OCR 再导入。</p></div>}
       </div>
-      {flow.busy && <span className="scroll-status" role="status"><LoaderCircle className="spin" size={15} /> 正在恢复阅读位置…</span>}
+      <div ref={flow.measure} className="page-measure flow-text page-typesetting" aria-hidden="true" />
+      {flow.busy && <span className="scroll-status" role="status"><LoaderCircle className="spin" size={15} /> 正在排版…</span>}
     </main>
   );
 }

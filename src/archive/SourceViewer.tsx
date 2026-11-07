@@ -1,3 +1,4 @@
+// Archived original-PDF comparison. Not imported by the active application.
 import { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { loadPdf } from "../pdf/client";

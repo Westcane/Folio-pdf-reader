@@ -57,18 +57,26 @@ export function useTranslations(book: Book, enabled: boolean) {
     }
     return selected;
   }, [cache, book.parserRevision, status?.provider]);
-  const texts = useMemo(() => Object.fromEntries(Object.entries(results).map(([id, row]) => [id, row.text])), [results]);
+  const previousTexts = useRef<Record<string, string>>({});
+  const texts = useMemo(() => {
+    const next = Object.fromEntries(Object.entries(results).map(([id, row]) => [id, row.text]));
+    const old = previousTexts.current;
+    if (Object.keys(old).length === Object.keys(next).length && Object.keys(next).every((id) => old[id] === next[id])) return old;
+    previousTexts.current = next;
+    return next;
+  }, [results]);
   const run = useCallback(async (blocks: ReadingBlock[], force = false) => {
     if (request.current || !loaded || !status?.configured) return;
     const unique = [...new Map(blocks.map((block) => [block.id, block])).values()];
-    const queue = unique.filter((block) => force || results[block.id]?.provider !== status.provider);
+    // Cached text has no TTL. Changing the configured model alone must not spend again.
+    const queue = unique.filter((block) => force || !results[block.id]);
     if (!queue.length) { setError(""); return; }
     const controller = new AbortController();
     request.current = controller;
     setError("");
     const completed: TranslationResult[] = [];
     const publish = () => {
-      if (alive.current) setCache((previous) => [...previous.filter((row) => !completed.some((next) => next.blockId === row.blockId && next.provider === row.provider && next.sourceRevision === row.sourceRevision)), ...completed]);
+      if (alive.current && completed.length) setCache((previous) => [...previous.filter((row) => !completed.some((next) => next.blockId === row.blockId && next.provider === row.provider && next.sourceRevision === row.sourceRevision)), ...completed]);
     };
     try {
       for (const block of queue) {
