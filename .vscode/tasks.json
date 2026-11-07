@@ -1,0 +1,59 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Folio: dev (LAN)",
+      "type": "process",
+      "command": "npm.cmd",
+      "args": ["run", "dev", "--", "--host", "0.0.0.0"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "folio-vite",
+        "pattern": {
+          "regexp": "^(.*):(\\d+):(\\d+): (.*)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "message": 4
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*VITE.*",
+          "endsPattern": ".*Local:.*5173.*"
+        }
+      },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Folio: DeepSeek API",
+      "type": "process",
+      "command": "npm.cmd",
+      "args": ["run", "api"],
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    },
+    {
+      "label": "Folio: typecheck",
+      "type": "process",
+      "command": "npm.cmd",
+      "args": ["run", "typecheck"],
+      "problemMatcher": "$tsc"
+    },
+    {
+      "label": "Folio: test",
+      "type": "process",
+      "command": "npm.cmd",
+      "args": ["test"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Folio: build",
+      "type": "process",
+      "command": "npm.cmd",
+      "args": ["run", "build"],
+      "problemMatcher": "$tsc",
+      "group": { "kind": "build", "isDefault": true }
+    }
+  ]
+}

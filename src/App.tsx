@@ -1,0 +1,656 @@
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
+import { useRegisterSW } from "virtual:pwa-register/react";
+import {
+  ArrowUpRight,
+  BookOpen,
+  Check,
+  FilePlus2,
+  FileText,
+  HardDrive,
+  LoaderCircle,
+  Plus,
+  ShieldCheck,
+  Trash2,
+  WifiOff,
+  X,
+} from "lucide-react";
+import Reader, { type ReaderState } from "./reader/Reader";
+import {
+  db,
+  deleteBook,
+  normalizeSettings,
+  saveImport,
+  readSource,
+  storageError,
+  writeProgress,
+} from "./storage/db";
+import {
+  defaultSettings,
+  PARSER_REVISION,
+  type Book,
+  type ImportState,
+  type ReadingBlock,
+  type ReadingProgress,
+  type Settings,
+} from "./types";
+
+// This condition and import are erased from production output by Vite.
+const DebugPanel = import.meta.env.DEV
+  ? lazy(() => import("./dev/DebugPanel"))
+  : null;
+const SourceViewer = lazy(() => import("./reader/SourceViewer"));
+type OpenBook = {
+  book: Book;
+  blocks: ReadingBlock[];
+  progress?: ReadingProgress;
+};
+
+export default function App() {
+  const [books, setBooks] = useState<Book[]>([]),
+    [opened, setOpened] = useState<OpenBook>();
+  const [settings, setSettings] = useState<Settings>(defaultSettings),
+    [showSettings, setShowSettings] = useState(false);
+  const [source, setSource] = useState<{
+    page: number;
+    block?: ReadingBlock;
+  }>();
+  const [error, setError] = useState(""),
+    [notice, setNotice] = useState(""),
+    [ready, setReady] = useState(false);
+  const [importState, setImportState] = useState<ImportState>(),
+    [importing, setImporting] = useState(false);
+  const [readerState, setReaderState] = useState<ReaderState>();
+  const [online, setOnline] = useState(navigator.onLine),
+    [storage, setStorage] = useState("正在检查本地存储…");
+  const fileInput = useRef<HTMLInputElement>(null),
+    importLock = useRef(false);
+  const progressRef = useRef<ReadingProgress | undefined>(undefined);
+  const reportError = useCallback((e: unknown) => {
+    console.error(e);
+    setError(storageError(e));
+  }, []);
+  const {
+    offlineReady: [offlineReady],
+    needRefresh: [needRefresh],
+    updateServiceWorker,
+  } = useRegisterSW({
+    onRegisterError(error) {
+      console.error("离线缓存注册失败", error);
+    },
+  });
+
+  const refreshBooks = useCallback(
+    async () =>
+      setBooks(await db.books.orderBy("importedAt").reverse().toArray()),
+    [],
+  );
+  const openBook = useCallback(async (book: Book) => {
+    let content = await db.contents.get(book.id);
+    let selected = book;
+    if (!content || book.parserRevision !== PARSER_REVISION) {
+      setImporting(true);
+      try {
+        const bytes = await readSource(book.id);
+        const file = new File([bytes.buffer as ArrayBuffer], book.name, {
+          type: "application/pdf",
+        });
+        const { importPdf } = await import("./import/importPdf");
+        const result = await importPdf(file, setImportState);
+        result.book.importedAt = book.importedAt;
+        await saveImport(result.book, result.blocks, file);
+        selected = result.book;
+        content = { bookId: book.id, blocks: result.blocks };
+        setBooks((previous) =>
+          previous.map((value) => (value.id === book.id ? selected : value)),
+        );
+        setNotice("已按新版排版规则重新解析，原阅读位置已尽量保留。");
+      } catch (error) {
+        if (!content) throw error;
+        console.warn("旧文档暂未重新解析", error);
+        setNotice(
+          "排版规则已更新，但本地原文件暂不可用。重新导入同一份 PDF 即可应用，现有内容仍可阅读。",
+        );
+      } finally {
+        setImporting(false);
+      }
+    }
+    if (!content)
+      throw new Error("结构化内容已不在浏览器中，请重新导入原 PDF。");
+    const progress = await db.progress.get(book.id);
+    progressRef.current = progress;
+    setOpened({ book: selected, blocks: content.blocks, progress });
+    setReaderState(undefined);
+    setShowSettings(false);
+    await db.settings.put({ key: "lastBook", value: book.id });
+  }, []);
+  useEffect(() => {
+    void (async () => {
+      await db.open();
+      setSettings(normalizeSettings((await db.settings.get("reader"))?.value));
+      await refreshBooks();
+      const last = (await db.settings.get("lastBook"))?.value;
+      if (typeof last === "string") {
+        const book = await db.books.get(last);
+        if (book) await openBook(book);
+      }
+      const persisted = await navigator.storage?.persisted?.();
+      const estimate = await navigator.storage?.estimate?.();
+      setStorage(
+        `${persisted ? "浏览器已授予持久存储" : "浏览器管理的本地存储"}${estimate?.usage ? ` · 已用约 ${(estimate.usage / 1024 / 1024).toFixed(1)} MB` : ""}`,
+      );
+    })()
+      .catch(reportError)
+      .finally(() => setReady(true));
+    const connection = () => setOnline(navigator.onLine);
+    window.addEventListener("online", connection);
+    window.addEventListener("offline", connection);
+    return () => {
+      window.removeEventListener("online", connection);
+      window.removeEventListener("offline", connection);
+    };
+  }, [openBook, refreshBooks, reportError]);
+  useEffect(() => {
+    document.documentElement.dataset.theme = settings.theme;
+    if (ready)
+      void db.settings
+        .put({ key: "reader", value: settings })
+        .catch(reportError);
+  }, [settings, ready, reportError]);
+  useEffect(() => {
+    const escape = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSource(undefined);
+        setShowSettings(false);
+      }
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, []);
+
+  const handleImport = async (file: File) => {
+    if (importLock.current) return;
+    importLock.current = true;
+    setImporting(true);
+    setError("");
+    setNotice("");
+    try {
+      const { importPdf } = await import("./import/importPdf");
+      const result = await importPdf(file, setImportState);
+      setImportState({
+        phase: "保存到本机",
+        page: result.book.totalPages,
+        total: result.book.totalPages,
+        blocks: result.blocks.length,
+      });
+      const existing = await db.books.get(result.book.id);
+      if (existing) result.book.importedAt = existing.importedAt;
+      await saveImport(result.book, result.blocks, file);
+      await refreshBooks();
+      await openBook(result.book);
+      setImportState({
+        phase: "导入完成",
+        page: result.book.totalPages,
+        total: result.book.totalPages,
+        blocks: result.blocks.length,
+      });
+      if (result.book.status === "source-only")
+        setNotice(
+          "没有提取到文字：这可能是扫描 PDF。本版本不含 OCR，请使用“原页校对”查看原始页面。",
+        );
+      else if (result.book.status === "review")
+        setNotice(
+          "部分页面需要校对。图表、公式或复杂排版可能无法正确重排，请通过段落旁的原页图标核对。",
+        );
+      else if (existing) setNotice("已重新导入相同文件，并保留原有阅读进度。");
+    } catch (e) {
+      reportError(e);
+      setImportState((previous) => ({
+        phase: "导入失败",
+        page: previous?.page ?? 0,
+        total: previous?.total ?? 0,
+        blocks: previous?.blocks ?? 0,
+        error: storageError(e),
+      }));
+    } finally {
+      importLock.current = false;
+      setImporting(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+  const handleProgress = useCallback(
+    (progress: ReadingProgress) => {
+      progressRef.current = progress;
+      void writeProgress(progress).catch(reportError);
+    },
+    [reportError],
+  );
+  const handleSource = useCallback(
+    (page: number, block?: ReadingBlock) => setSource({ page, block }),
+    [],
+  );
+  const leaveReader = () => {
+    setOpened(undefined);
+    setShowSettings(false);
+    setSource(undefined);
+    void db.settings.delete("lastBook").catch(reportError);
+    void refreshBooks().catch(reportError);
+  };
+  const demo = async () => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.BASE_URL}samples/reading-sample.pdf`,
+      );
+      if (!response.ok) throw new Error("示例文件不可用，请导入自己的 PDF。");
+      await handleImport(
+        new File([await response.blob()], "A quieter place.pdf", {
+          type: "application/pdf",
+        }),
+      );
+    } catch (e) {
+      reportError(e);
+    }
+  };
+
+  return (
+    <div className={`app ${opened ? "is-reading" : ""}`}>
+      <input
+        ref={fileInput}
+        className="visually-hidden"
+        type="file"
+        accept=".pdf,application/pdf"
+        aria-label="选择 PDF 文件"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) void handleImport(file);
+        }}
+      />
+      {!opened && <header className="app-header">
+          <>
+            <a className="brand" href="./" aria-label="Folio 首页">
+              <span className="brand-symbol">
+                <BookOpen size={23} />
+              </span>
+              <span>
+                folio<span className="brand-dot">.</span>
+              </span>
+            </a>
+            <div className="header-note">
+              <span className="status-dot" /> LOCAL FIRST{" "}
+              <span className="header-separator">/</span> 为专注而生
+            </div>
+            <button
+              className="primary-button small"
+              disabled={!ready || importing}
+              onClick={() => fileInput.current?.click()}
+            >
+              <Plus size={17} />
+              导入 PDF
+            </button>
+          </>
+      </header>}
+      {!online && !opened && (
+        <div className="connection-banner">
+          <WifiOff size={14} /> 当前离线 · 已保存在此设备的文档可继续阅读
+        </div>
+      )}
+      {needRefresh && (
+        <div className="update-banner">
+          新版本已准备好。
+          <button
+            onClick={() => {
+              if (progressRef.current)
+                void writeProgress(progressRef.current)
+                  .then(() => updateServiceWorker(true))
+                  .catch(reportError);
+              else void updateServiceWorker(true);
+            }}
+          >
+            保存位置并更新
+          </button>
+        </div>
+      )}
+      {error && (
+        <div className="error-banner" role="alert">
+          <span>{error}</span>
+          <button aria-label="关闭错误提示" onClick={() => setError("")}>
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      {notice && (
+        <div className="notice-banner" role="status">
+          <span>{notice}</span>
+          <button aria-label="关闭提示" onClick={() => setNotice("")}>
+            <X size={16} />
+          </button>
+        </div>
+      )}
+
+      {opened ? (
+        <>
+          {showSettings && (
+            <section
+              className="settings-panel"
+              role="dialog"
+              aria-label="阅读设置面板"
+            >
+              <header>
+                <strong>让阅读更舒适</strong>
+                <button
+                  className="icon-button"
+                  aria-label="关闭阅读设置"
+                  onClick={() => setShowSettings(false)}
+                >
+                  <X size={18} />
+                </button>
+              </header>
+              <label>
+                字号 <output>{settings.fontSize}px</output>
+                <input
+                  aria-label="字号"
+                  type="range"
+                  min="16"
+                  max="32"
+                  step="1"
+                  value={settings.fontSize}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      fontSize: Number(e.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                行距 <output>{settings.lineHeight.toFixed(2)}</output>
+                <input
+                  aria-label="行距"
+                  type="range"
+                  min="1.3"
+                  max="2.2"
+                  step="0.05"
+                  value={settings.lineHeight}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      lineHeight: Number(e.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                页边距 <output>{settings.margin}px</output>
+                <input
+                  aria-label="页边距"
+                  type="range"
+                  min="20"
+                  max="80"
+                  step="4"
+                  value={settings.margin}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      margin: Number(e.target.value),
+                    }))
+                  }
+                />
+              </label>
+              <div className="theme-options">
+                {(
+                  [
+                    ["light", "浅色"],
+                    ["sepia", "护眼"],
+                    ["dark", "深色"],
+                  ] as const
+                ).map(([theme, label]) => (
+                  <button
+                    key={theme}
+                    className={`theme-choice theme-${theme}`}
+                    aria-pressed={settings.theme === theme}
+                    onClick={() => setSettings((s) => ({ ...s, theme }))}
+                  >
+                    {settings.theme === theme && <Check size={14} />}
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <label className="bilingual-toggle">
+                <span>
+                  英中双语 · DeepSeek
+                  <small>也可从侧面翻译菜单统一收起或展开</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settings.bilingual}
+                  onChange={(e) =>
+                    setSettings((s) => ({ ...s, bilingual: e.target.checked }))
+                  }
+                />
+              </label>
+            </section>
+          )}
+          <Reader
+            key={opened.book.id}
+            book={opened.book}
+            blocks={opened.blocks}
+            settings={settings}
+            online={online}
+            onBack={leaveReader}
+            onOpenSettings={() => setShowSettings((value) => !value)}
+            onBilingual={(bilingual) => setSettings((value) => ({ ...value, bilingual }))}
+            initialProgress={opened.progress}
+            onProgress={handleProgress}
+            onSource={handleSource}
+            onState={setReaderState}
+            onError={reportError}
+          />
+          {source && (
+            <Suspense fallback={<span className="scroll-status">正在加载原页…</span>}>
+            <SourceViewer
+              book={opened.book}
+              initialPage={source.page}
+              block={source.block}
+              onClose={() => setSource(undefined)}
+            />
+            </Suspense>
+          )}
+        </>
+      ) : (
+        <main className="library">
+          <section className="library-intro">
+            <div className="eyebrow">
+              <span /> YOUR PERSONAL READING SPACE
+            </div>
+            <h1>
+              你的书，
+              <br className="mobile-break" />
+              重新展开<span>。</span>
+            </h1>
+            <p>
+              让固定的 PDF，变成适合你的阅读节奏。
+              <br />
+              本地导入，自由重排，随时接着读。
+            </p>
+            <div className="intro-rule" />
+          </section>
+          <section className="library-section">
+            <div className="section-heading">
+              <h2>
+                我的书库 <span>{books.length.toString().padStart(2, "0")}</span>
+              </h2>
+              <span>仅保存在此设备</span>
+            </div>
+            <button
+              className="import-dropzone"
+              disabled={!ready || importing}
+              onClick={() => fileInput.current?.click()}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const file = e.dataTransfer.files[0];
+                if (file) void handleImport(file);
+              }}
+            >
+              <span className="import-icon">
+                <FilePlus2 size={28} strokeWidth={1.4} />
+              </span>
+              <strong>把下一本好书带进来</strong>
+              <span>选择或拖入文字型 PDF · 最大 50 MB / 300 页</span>
+              <span className="dropzone-action">
+                选择 PDF 文件 <Plus size={16} />
+              </span>
+            </button>
+            {books.length > 0 && (
+              <div className="book-list">
+                {books.map((book, i) => (
+                  <div className="book-card" key={book.id}>
+                    <button
+                      className="book-open"
+                      onClick={() => {
+                        setError("");
+                        void openBook(book).catch(reportError);
+                      }}
+                    >
+                      <span className={`book-cover cover-${i % 3}`}>
+                        <span>PDF</span>
+                        <BookOpen size={30} strokeWidth={1.1} />
+                        <small>FOLIO LIBRARY</small>
+                      </span>
+                      <span className="book-info">
+                        <small>
+                          {book.status === "ready"
+                            ? "可以重排阅读"
+                            : book.status === "source-only"
+                              ? "扫描文档 · 原页阅读"
+                              : "已导入 · 部分页面待校对"}
+                        </small>
+                        <strong>{book.name}</strong>
+                        <span>
+                          {book.totalPages} 个原始页 <i /> {book.blockCount}{" "}
+                          个阅读段落
+                        </span>
+                      </span>
+                      <span className="open-arrow">
+                        <ArrowUpRight size={21} />
+                      </span>
+                    </button>
+                    <button
+                      className="delete-book icon-button"
+                      title="从本机书库移除"
+                      aria-label={`移除 ${book.name}`}
+                      onClick={() => {
+                        if (
+                          window.confirm(
+                            `从本机书库移除“${book.name}”？原始文件不会被修改。`,
+                          )
+                        )
+                          void deleteBook(book.id)
+                            .then(refreshBooks)
+                            .catch(reportError);
+                      }}
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="sample-row">
+              <span>
+                <FileText size={16} /> 还没有合适的 PDF？
+              </span>
+              <button
+                onClick={() => void demo()}
+                disabled={!ready || importing}
+              >
+                试读示例 <ArrowUpRight size={15} />
+              </button>
+            </div>
+          </section>
+          <section className="library-bottom">
+            <div>
+              <ShieldCheck size={19} />
+              <div>
+                <strong>书籍只属于你</strong>
+                <p>解析在设备上完成，无需账户，也不上传文件。</p>
+              </div>
+            </div>
+            <div>
+              <HardDrive size={19} />
+              <div>
+                <strong>记得保留原文件</strong>
+                <p>Safari 清理网站数据可能移除书库；安装 PWA 不等于备份。</p>
+              </div>
+            </div>
+          </section>
+          <footer className="library-footer">
+            <span>FOLIO · A LITTLE SPACE TO READ</span>
+            <span>
+              {offlineReady
+                ? "应用外壳已可离线"
+                : import.meta.env.DEV
+                  ? "开发模式 · 热更新已启用"
+                  : "HTTPS 下支持添加到主屏幕"}
+            </span>
+          </footer>
+          <details className="storage-details">
+            <summary>{storage}</summary>
+            <p>
+              文档、原文件和进度使用 IndexedDB；静态资源使用 Service Worker
+              缓存。两者独立，同一浏览器、域名与端口下保存。重新导入相同文件可恢复仍在本机的进度。
+            </p>
+            <button
+              onClick={() => {
+                void navigator.storage
+                  ?.persist?.()
+                  .then((granted) =>
+                    setStorage(
+                      granted
+                        ? "浏览器已授予持久存储，仍请保留原文件"
+                        : "Safari 未授予持久存储，仍可正常阅读，请保留原文件",
+                    ),
+                  )
+                  .catch(reportError);
+              }}
+            >
+              尝试保留本地存储
+            </button>
+          </details>
+        </main>
+      )}
+      {importing && (
+        <div className="import-overlay" role="status">
+          <div>
+            <LoaderCircle className="spin" size={28} />
+            <h2>{importState?.phase ?? "正在导入"}</h2>
+            <p>在本机处理，文件不会上传</p>
+            <progress
+              max={importState?.total || 1}
+              value={importState?.page || 0}
+            />
+            <small>
+              {importState?.page || 0} / {importState?.total || "—"} 个原始页 ·{" "}
+              {importState?.blocks || 0} 个段落
+            </small>
+          </div>
+        </div>
+      )}
+      {DebugPanel && (
+        <Suspense fallback={null}>
+          <DebugPanel
+            importState={importState}
+            readerState={readerState}
+            book={opened?.book}
+          />
+        </Suspense>
+      )}
+    </div>
+  );
+}

@@ -1,0 +1,68 @@
+.dev-tools {
+  position: fixed;
+  left: 12px;
+  bottom: max(8px, env(safe-area-inset-bottom));
+  z-index: 100;
+  font:
+    12px/1.5 ui-monospace,
+    Consolas,
+    monospace;
+}
+.dev-toggle {
+  min-height: 30px !important;
+  padding: 4px 10px !important;
+  border: 1px solid #778985 !important;
+  background: #182c29 !important;
+  color: #c8f6d9 !important;
+  border-radius: 6px !important;
+  font: inherit !important;
+}
+.dev-panel {
+  position: absolute;
+  bottom: 38px;
+  left: 0;
+  width: min(500px, calc(100vw - 24px));
+  max-height: 65dvh;
+  overflow: auto;
+  padding: 16px;
+  background: #112320;
+  color: #e2f0e8;
+  border: 1px solid #6e9c84;
+  border-radius: 10px;
+  box-shadow: 0 8px 40px #0005;
+}
+.dev-panel header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.dev-panel button {
+  color: #d3f5dd;
+  background: #315348;
+  border: 0;
+  border-radius: 4px;
+  min-height: 36px;
+  padding: 4px 10px;
+}
+.dev-panel p,
+.dev-panel dt {
+  color: #9cbdab;
+}
+.dev-panel dd {
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dev-panel pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-top: 1px solid #466b58;
+  padding-top: 8px;
+  font-size: 11px;
+}
+.dev-panel details {
+  margin-bottom: 16px;
+}
+.dev-panel summary {
+  cursor: pointer;
+}

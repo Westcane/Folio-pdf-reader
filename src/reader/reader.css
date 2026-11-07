@@ -1,0 +1,114 @@
+.app.is-reading { position: relative; overflow: hidden; height: calc(100dvh - env(safe-area-inset-top)); min-height: 0; }
+.scroll-reader.reader { height: 100%; min-height: 0; position: relative; }
+.reading-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior-y: contain;
+  overflow-anchor: none;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y pinch-zoom;
+  scrollbar-width: thin;
+  scrollbar-color: var(--dashed) transparent;
+  outline: none;
+}
+.scroll-column {
+  position: relative;
+  width: min(820px, calc(100% - max(68px, var(--reading-margin)) - max(88px, var(--reading-margin))));
+  margin-left: max(68px, var(--reading-margin), calc((100% - 820px) / 2));
+}
+.reading-block { position: absolute; top: 0; left: 0; width: 100%; }
+.reading-block .source-text { cursor: text; }
+.reading-block.uncertain:before { top: 5px; bottom: 15px; }
+.reading-capsule {
+  position: absolute;
+  z-index: 5;
+  top: 3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(600px, calc(100% - 150px));
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: var(--veil);
+  border: 1px solid var(--line);
+  border-radius: 30px;
+  padding: 0 15px;
+  color: var(--muted);
+  box-shadow: 0 3px 16px #182b2005;
+  font-size: 11px;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.reading-capsule strong { font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reading-capsule > span { flex: none; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.reading-capsule.collapsed { width: auto; min-width: 80px; gap: 7px; border-color: transparent; background: var(--veil); }
+.reader-dock { position: absolute; z-index: 8; top: 68px; left: 10px; display: flex; flex-direction: column; gap: 10px; }
+.round-tool {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  min-height: 44px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--veil);
+  color: var(--accent);
+  box-shadow: 0 3px 14px #182b2007;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+.round-tool:hover, .round-tool.active { background: var(--soft); border-color: var(--dashed); }
+.round-tool i { position: absolute; right: 8px; bottom: 7px; width: 4px; height: 4px; background: var(--accent); border-radius: 50%; }
+.translation-popover {
+  position: absolute;
+  z-index: 10;
+  left: 64px;
+  top: 68px;
+  width: min(310px, calc(100vw - 88px));
+  max-height: calc(100% - 90px);
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 12px 50px #172c2215;
+  font-size: 13px;
+}
+.translation-popover header { display: flex; align-items: center; justify-content: space-between; padding-left: 8px; }
+.translation-popover header small { margin-left: 6px; color: var(--muted); font-weight: 400; font-size: 11px; }
+.translation-menu-item { width: 100%; min-height: 48px; padding: 10px 9px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); text-align: left; font-size: 13px; }
+.translation-menu-item:hover { background: var(--soft); }
+.translation-menu-item small { display: block; font-size: 11px; margin-top: 4px; color: var(--muted); }
+.translation-menu-item svg { float: right; }
+.translation-menu-item.confirm { background: var(--soft); }
+.popover-rule { height: 1px; background: var(--line); margin: 6px 8px; }
+.translation-summary { padding: 0 8px; color: var(--muted); font-size: 11px; line-height: 1.7; margin: 10px 0 0; }
+.translation-popover .translation-error { font-size: 12px; padding: 2px 8px; margin: 6px 0; }
+.quiet-link { border: 0; background: none; color: var(--accent); font-size: 12px; padding: 5px 8px; }
+.paragraph-action-track { position: absolute; top: 0; bottom: 0; right: -82px; width: 80px; }
+.paragraph-actions { position: sticky; top: 58px; display: flex; width: 80px; z-index: 3; }
+.paragraph-actions .source-ref, .paragraph-actions .translate-ref { width: 40px; height: 44px; min-height: 44px !important; flex: none; color: var(--muted); padding: 0; border: 0; background: transparent; display: grid; place-items: center; }
+.paragraph-actions button:hover, .paragraph-actions button:focus-visible { color: var(--accent); }
+.paragraph-translation { margin-top: 8px; border-left: 1px solid var(--dashed); padding-left: 16px; }
+.paragraph-translation .translated { font-size: 0.94em; color: var(--accent); cursor: text; }
+.paragraph-translation .translated:focus-visible { outline: 1px solid var(--dashed); outline-offset: 4px; }
+.paragraph-translation .translated.kind-title { font-size: 1.4em; }
+.paragraph-translation .translated.kind-heading { font-size: 1.08em; }
+.scroll-status { position: absolute; bottom: max(14px, env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); padding: 8px 13px; border-radius: 24px; background: var(--veil); color: var(--muted); font-size: 11px; display: flex; gap: 8px; align-items: center; pointer-events: none; }
+.empty-reading { position: absolute; top: 25%; left: 10%; right: 10%; text-align: center; color: var(--muted); }
+.empty-reading .primary-button { margin: 20px auto; }
+.is-reading .settings-panel { position: absolute; top: 68px; left: 64px; right: auto; max-height: calc(100% - 90px); overflow-y: auto; width: min(310px, calc(100vw - 88px)); }
+.is-reading > .error-banner, .is-reading > .notice-banner, .is-reading > .update-banner { position: absolute; left: 68px; right: 16px; bottom: max(14px, env(safe-area-inset-bottom)); z-index: 15; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px #182b2010; padding: 10px 14px; }
+@media (max-width: 600px) {
+  .scroll-column { width: calc(100% - max(60px, var(--reading-margin)) - 80px); margin-left: max(60px, var(--reading-margin)); }
+  .reading-capsule { width: calc(100% - 90px); left: calc(50% + 22px); gap: 7px; padding: 0 12px; }
+  .reading-capsule strong { font-size: 11px; }
+  .reading-capsule span { font-size: 10px; }
+  .reader-dock { left: 8px; gap: 8px; }
+}

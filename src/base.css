@@ -1,0 +1,129 @@
+:root {
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color-scheme: light;
+  --bg: #f7f6f2;
+  --surface: #fdfcf9;
+  --ink: #283c34;
+  --muted: #848b80;
+  --line: #e1e4da;
+  --accent: #496c55;
+  --soft: #eff2ea;
+  --soft-hover: #e7ede2;
+  --dashed: #bdcabc;
+  --veil: #f7f6f2ed;
+  background: var(--bg);
+  color: var(--ink);
+  font-synthesis: none;
+  text-size-adjust: 100%;
+  -webkit-text-size-adjust: 100%;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  width: 100%;
+}
+body {
+  margin: 0;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0
+    env(safe-area-inset-left);
+  background: var(--bg);
+}
+button,
+a,
+input,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+button {
+  font-family: inherit;
+  cursor: pointer;
+  min-height: 44px;
+}
+button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+input {
+  font-family: inherit;
+}
+input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+::selection {
+  background: #9fb59c60;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.icon-button {
+  display: grid;
+  place-items: center;
+  min-width: 40px;
+  min-height: 40px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink);
+}
+.icon-button:hover {
+  background: var(--soft);
+}
+:root[data-theme="sepia"] {
+  --bg: #f2e9d7;
+  --surface: #f8f0e1;
+  --ink: #51442f;
+  --muted: #918367;
+  --line: #ded2bc;
+  --accent: #786743;
+  --soft: #eae1cb;
+  --soft-hover: #e3d8bd;
+  --dashed: #c8b899;
+  --veil: #f2e9d7ed;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #1e2723;
+  --surface: #252f29;
+  --ink: #dce4d8;
+  --muted: #9aa896;
+  --line: #354239;
+  --accent: #a1b990;
+  --soft: #28352c;
+  --soft-hover: #304233;
+  --dashed: #566c57;
+  --veil: #1e2723ed;
+}
+.app {
+  min-height: 100dvh;
+}
+@supports (padding: max(0px)) {
+  .is-reading {
+    height: calc(100dvh - env(safe-area-inset-top));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
