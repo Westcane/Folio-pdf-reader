@@ -1,55 +1,77 @@
 import "fake-indexeddb/auto";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../storage/db";
-import { deepSeekProvider, getDeepSeekStatus, translateBlock } from "./provider";
+import { deepSeekProvider, getDeepSeekStatus, testDeepSeekConnection, translateBlock } from "./provider";
+import { loadDeepSeekConfig, saveDeepSeekConfig, validateDeepSeekConfig } from "./config";
+import { TRANSLATION_PROMPT } from "./prompt";
 import { PARSER_REVISION, type ReadingBlock } from "../types";
 
 const block = { id: "paragraph-1", text: "A quiet morning.", kind: "paragraph" } as ReadingBlock;
-const status = { configured: true, provider: "deepseek:model:prompt", model: "model", maxCharacters: 16000 };
-beforeEach(async () => { await db.delete(); await db.open(); });
-afterEach(() => { vi.unstubAllGlobals(); });
+const config = { apiKey: "folio-test-only", baseUrl: "https://api.deepseek.com", model: "deepseek-flash" };
+const completion = (text = "静谧的清晨。", finish_reason = "stop") => Response.json({ choices: [{ finish_reason, message: { content: text } }] });
+beforeEach(async () => { await db.delete(); await db.open(); vi.stubGlobal("window", new EventTarget()); });
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 afterAll(async () => { await db.delete(); });
 
-describe("DeepSeek browser adapter and persistent paragraph cache", () => {
-  it("sends only paragraph text to the same-origin proxy; caches and force-replaces a translation", async () => {
-    const fetchMock = vi.fn().mockImplementation(async (_url, options) => {
-      expect(_url).toBe("/api/translation");
+describe("direct official DeepSeek requests and local configuration", () => {
+  it("persists the key, clears it independently of books, and restricts the endpoint", async () => {
+    await saveDeepSeekConfig(config); db.close(); await db.open();
+    expect(await loadDeepSeekConfig()).toEqual(config);
+    await db.settings.put({ key: "lastBook", value: "book" });
+    await saveDeepSeekConfig({ ...config, apiKey: "" });
+    expect((await loadDeepSeekConfig()).apiKey).toBe("");
+    expect((await db.settings.get("lastBook"))?.value).toBe("book");
+    for (const baseUrl of ["http://api.deepseek.com", "https://example.com", "https://api.deepseek.com.evil.test", "https://user:secret@api.deepseek.com", "https://api.deepseek.com?key=x", "https://api.deepseek.com/other"]) {
+      expect(() => validateDeepSeekConfig({ ...config, baseUrl })).toThrow();
+    }
+    expect(validateDeepSeekConfig({ ...config, baseUrl: config.baseUrl + "/v1/" }).baseUrl).toBe(config.baseUrl + "/v1");
+  });
+  it("sends only structured source and the original prompt to official HTTPS; reuses cache", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (url, options) => {
+      expect(url).toBe("https://api.deepseek.com/chat/completions");
+      expect(options).toMatchObject({ cache: "no-store", credentials: "omit", redirect: "error", headers: { Authorization: "Bearer folio-test-only" } });
       const body = JSON.parse(options.body);
-      expect(body).toMatchObject({ text: block.text, kind: block.kind, targetLanguage: "zh-CN" });
-      expect(options.headers.Authorization).toBeUndefined();
-      return Response.json({ text: fetchMock.mock.calls.length === 1 ? "静谧的清晨。" : "安静的早晨。", provider: body.provider });
+      expect(body.model).toBe("deepseek-flash");
+      expect(body.messages).toEqual([{ role: "system", content: TRANSLATION_PROMPT }, { role: "user", content: JSON.stringify({ blockKind: block.kind, sourceText: block.text }) }]);
+      expect(options.body).not.toContain(config.apiKey);
+      return completion();
     });
     vi.stubGlobal("fetch", fetchMock);
-    const provider = deepSeekProvider(status);
-    await translateBlock(provider, "book", block);
-    db.close(); await db.open();
+    const provider = deepSeekProvider(config);
+    await translateBlock(provider, "book", block); db.close(); await db.open();
     expect((await translateBlock(provider, "book", block)).text).toBe("静谧的清晨。");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect((await translateBlock(provider, "book", block, true)).text).toBe("安静的早晨。");
-    expect(await db.translations.count()).toBe(1);
-    await translateBlock(deepSeekProvider({ ...status, provider: "deepseek:new-model:new-prompt" }), "book", block);
-    await translateBlock(provider, "other-book", block);
-    // A different source revision must request again, rather than reusing stale text.
+    await translateBlock(provider, "book", block, true);
     await translateBlock(provider, "book", block, false, undefined, PARSER_REVISION + "-new");
-    expect(fetchMock).toHaveBeenCalledTimes(5);
-    expect(await db.translations.count()).toBe(4);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(JSON.stringify(await db.translations.toArray())).not.toContain(config.apiKey);
+    expect(getDeepSeekStatus(config)).not.toHaveProperty("apiKey");
   });
-  it("failed, truncated or cancelled requests never poison an existing cache", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json({ error: "余额不足" }, { status: 502 })));
-    await expect(translateBlock(deepSeekProvider(status), "book", block)).rejects.toThrow("余额不足");
-    expect(await db.translations.count()).toBe(0);
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => Response.json({ text: "中文", provider: "changed" })));
-    await expect(translateBlock(deepSeekProvider(status), "book", block)).rejects.toThrow("模型已改变");
+  it.each([401, 402, 429, 500, 503])("maps HTTP %s without echoing upstream secrets or retrying", async (status) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ error: { message: config.apiKey } }, { status }));
+    vi.stubGlobal("fetch", fetchMock);
+    const error = await translateBlock(deepSeekProvider(config), "book", block).catch((error: Error) => error);
+    if (!(error instanceof Error)) throw new Error("Expected the request to fail");
+    expect(error.message).toContain(String(status)); expect(error.message).not.toContain(config.apiKey);
+    expect(fetchMock).toHaveBeenCalledTimes(1); expect(await db.translations.count()).toBe(0);
+  });
+  it("never caches truncated output or a canceled request; network failure is sanitized", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => completion("partial", "length")));
+    await expect(translateBlock(deepSeekProvider(config), "book", block)).rejects.toThrow("不完整译文");
     const controller = new AbortController(); controller.abort();
-    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => Response.json({ text: "中文", provider: status.provider })));
-    await expect(translateBlock(deepSeekProvider(status), "book", block, false, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
-    expect(await db.translations.count()).toBe(0);
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
-    await expect(translateBlock(deepSeekProvider(status), "book", block)).rejects.toThrow("翻译连接中断");
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () => completion()));
+    await expect(translateBlock(deepSeekProvider(config), "book", block, false, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError(config.apiKey)));
+    await expect(translateBlock(deepSeekProvider(config), "book", block)).rejects.toThrow("无法连接 DeepSeek");
     expect(await db.translations.count()).toBe(0);
   });
-  it("missing proxy produces setup guidance rather than treating HTML as an API response", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("<html>app</html>")));
-    await expect(getDeepSeekStatus()).rejects.toThrow("npm.cmd run api");
+  it("connection test only queries model metadata, and a stalled request times out", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ data: [{ id: config.model }] })); vi.stubGlobal("fetch", fetchMock);
+    await expect(testDeepSeekConnection(config)).resolves.toContain("尚未发起付费翻译");
+    expect(fetchMock.mock.calls[0][0]).toBe(config.baseUrl + "/models");
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url, options) => new Promise((_resolve, reject) => options.signal.addEventListener("abort", () => reject(new DOMException("abort", "AbortError"))))));
+    const waiting = expect(testDeepSeekConnection(config)).rejects.toThrow("超时");
+    await vi.advanceTimersByTimeAsync(15001); await waiting;
   });
 });

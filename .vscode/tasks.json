@@ -25,10 +25,10 @@
       "presentation": { "reveal": "always", "panel": "dedicated" }
     },
     {
-      "label": "Folio: DeepSeek API",
+      "label": "Folio: preview (Pages)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "api"],
+      "args": ["run", "preview", "--", "--base", "/Folio-pdf-reader/"],
       "isBackground": true,
       "problemMatcher": [],
       "presentation": { "reveal": "always", "panel": "dedicated" }

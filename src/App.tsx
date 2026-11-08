@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import Reader, { type ReaderState } from "./reader/Reader";
+import DeepSeekSettings from "./translation/DeepSeekSettings";
 import {
   db,
   deleteBook,
@@ -56,6 +57,9 @@ export default function App() {
     [opened, setOpened] = useState<OpenBook>();
   const [settings, setSettings] = useState<Settings>(defaultSettings),
     [showSettings, setShowSettings] = useState(false);
+  const [showApiSettings, setShowApiSettings] = useState(false);
+  const closeApiSettings = useCallback(() => setShowApiSettings(false), []);
+  const swRegistration = useRef<ServiceWorkerRegistration | undefined>(undefined);
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [ready, setReady] = useState(false);
@@ -76,10 +80,18 @@ export default function App() {
     needRefresh: [needRefresh],
     updateServiceWorker,
   } = useRegisterSW({
+    immediate: true,
+    onRegisteredSW(_url, registration) { swRegistration.current = registration; void registration?.update().catch(() => {}); },
     onRegisterError(error) {
       console.error("离线缓存注册失败", error);
     },
   });
+  useEffect(() => {
+    const update = () => { if (navigator.onLine && document.visibilityState === "visible") void swRegistration.current?.update().catch(() => {}); };
+    const timer = setInterval(update, 60 * 60 * 1000);
+    document.addEventListener("visibilitychange", update); window.addEventListener("online", update);
+    return () => { clearInterval(timer); document.removeEventListener("visibilitychange", update); window.removeEventListener("online", update); };
+  }, []);
 
   const refreshBooks = useCallback(
     async () =>
@@ -274,6 +286,7 @@ export default function App() {
               <span className="status-dot" /> LOCAL FIRST{" "}
               <span className="header-separator">/</span> 为专注而生
             </div>
+            <button className="quiet-link library-api" onClick={() => setShowApiSettings(true)}>API 设置</button>
             <button
               className="primary-button small"
               disabled={!ready || importing}
@@ -428,7 +441,8 @@ export default function App() {
             onBack={leaveReader}
             onOpenSettings={() => setShowSettings((value) => !value)}
             onBilingual={(bilingual) => setSettings((value) => ({ ...value, bilingual }))}
-            settingsOpen={showSettings}
+            settingsOpen={showSettings || showApiSettings}
+            onOpenApiSettings={() => setShowApiSettings(true)}
             initialProgress={opened.progress}
             onProgress={handleProgress}
             onState={setReaderState}
@@ -615,6 +629,7 @@ export default function App() {
           </div>
         </div>
       )}
+      {showApiSettings && <DeepSeekSettings onClose={closeApiSettings} />}
       {DebugPanel && (
         <Suspense fallback={null}>
           <DebugPanel

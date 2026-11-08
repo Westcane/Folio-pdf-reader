@@ -1,3 +1,4 @@
+// Adapted from FIERsity/WebReader (MIT). See LICENSES/WebReader-MIT.txt.
 import {
   appendStyleRange,
   clipStyleRanges,

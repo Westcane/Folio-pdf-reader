@@ -1,0 +1,17 @@
+.api-settings-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom)); background: #182b2040; }
+.api-settings { width: min(440px, 100%); max-height: 100%; overflow-y: auto; background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 20px; padding: 24px; box-shadow: 0 16px 80px #172c2225; font-size: 16px; }
+.api-settings header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.api-settings h2 { margin: 0; font-size: 20px; }
+.api-settings p { font-size: 14px; line-height: 1.7; color: var(--muted); }
+.api-settings label { display: block; margin: 16px 0 8px; }
+.api-settings input, .api-settings select { width: 100%; min-height: 44px; border: 1px solid var(--dashed); border-radius: 8px; background: var(--surface); color: var(--ink); font: inherit; padding: 8px 10px; }
+.api-settings small { display: block; margin-top: 6px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+.api-key-field { display: flex; gap: 6px; align-items: center; }
+.api-key-field input { min-width: 0; flex: 1; }
+.api-key-field button { flex: none; }
+.api-settings-actions { display: flex; gap: 12px; margin: 20px 0 12px; }
+.api-settings-actions > button { flex: 1; min-height: 44px; border: 1px solid var(--dashed); border-radius: 10px; font: inherit; background: var(--soft); color: var(--ink); }
+.api-settings-actions > .primary-button { background: var(--accent); color: var(--surface); }
+.api-clear { border: 0; background: none; color: var(--muted); font: inherit; min-height: 44px; padding: 0 4px; }
+.api-settings .translation-error { color: #a34530; }
+.library-api { margin-left: auto; margin-right: 14px; min-width: 70px; min-height: 44px; }

@@ -1,11 +1,10 @@
 import { readFileSync, existsSync, cpSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
-import type { Connect } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 
-export default defineConfig(({ mode }) => {
+export default defineConfig(({ mode, command }) => {
   const cert = resolve(".cert/lan.pem");
   const key = resolve(".cert/lan-key.pem");
   if (mode === "https" && (!existsSync(cert) || !existsSync(key))) {
@@ -18,23 +17,17 @@ export default defineConfig(({ mode }) => {
       ? { cert: readFileSync(cert), key: readFileSync(key) }
       : undefined;
   const testMode = process.env.FOLIO_TEST_MODE === "1";
-  const proxy = testMode ? undefined : { "/api": { target: "http://127.0.0.1:8787", changeOrigin: false } };
-  const blockPaidApi = (server: { middlewares: Connect.Server }) => {
-    if (!testMode) return;
-    server.middlewares.use("/api", (_request, response) => {
-      response.statusCode = 503;
-      response.setHeader("Content-Type", "application/json; charset=utf-8");
-      response.setHeader("Cache-Control", "no-store");
-      response.end(JSON.stringify({ error: "测试服务器禁止真实 API 转发。", testMode: true }));
-    });
-  };
   return {
     base: "./",
-    server: { host: "0.0.0.0", port: 5173, strictPort: true, https, proxy },
-    preview: { host: "0.0.0.0", port: 4173, strictPort: true, https, proxy },
+    server: { host: "0.0.0.0", port: 5173, strictPort: true, https },
+    preview: { host: "0.0.0.0", port: 4173, strictPort: true, https },
+    define: { __FOLIO_TEST_MODE__: JSON.stringify(testMode) },
     build: { target: "safari17.4", chunkSizeWarningLimit: 900 },
     plugins: [
-      { name: "block-paid-api-in-tests", configureServer: blockPaidApi, configurePreviewServer: blockPaidApi },
+      { name: "production-security-policy", transformIndexHtml() {
+        if (command !== "build") return [];
+        return [{ tag: "meta", attrs: { "http-equiv": "Content-Security-Policy", content: "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; worker-src 'self' blob:; connect-src 'self' https://api.deepseek.com; object-src 'none'; base-uri 'self'; form-action 'self'" }, injectTo: "head-prepend" }];
+      } },
       react(),
       {
         name: "local-pdf-assets",
@@ -47,6 +40,9 @@ export default defineConfig(({ mode }) => {
               recursive: true,
             });
           }
+          mkdirSync(resolve("public/licenses"), { recursive: true });
+          cpSync(resolve("LICENSES/WebReader-MIT.txt"), resolve("public/licenses/WebReader-MIT.txt"));
+          cpSync(resolve("node_modules/pdfjs-dist/LICENSE"), resolve("public/licenses/PDFjs-Apache-2.0.txt"));
         },
       },
       VitePWA({
@@ -54,6 +50,7 @@ export default defineConfig(({ mode }) => {
         includeAssets: ["icons/*.png", "icons/*.svg"],
         manifest: {
           name: "Folio · 本地 PDF 阅读",
+          id: "./",
           short_name: "Folio",
           lang: "zh-CN",
           description: "在设备上重排、阅读和校对文字型 PDF。",
@@ -80,15 +77,16 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           globPatterns: [
-            "**/*.{html,js,mjs,css,svg,png,bcmap,pfb,ttf,wasm,pdf,bin}",
+            "**/*.{html,js,mjs,css,svg,png,bcmap,pfb,ttf,wasm,pdf,bin,txt}",
           ],
           maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
           navigateFallback: "index.html",
-          navigateFallbackDenylist: [/^\/api\//],
           cleanupOutdatedCaches: true,
+          clientsClaim: true,
           runtimeCaching: [],
         },
         devOptions: { enabled: false },
+        injectRegister: "auto",
       }),
     ],
     test: { include: ["src/**/*.test.ts"], environment: "node" },

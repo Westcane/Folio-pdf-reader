@@ -2,16 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { db } from "../storage/db";
 import type { Book, ReadingBlock, TranslationResult } from "../types";
 import { deepSeekProvider, getDeepSeekStatus, translateBlock, type DeepSeekStatus } from "./provider";
+import { configChanged, loadDeepSeekConfig, type DeepSeekConfig } from "./config";
 
 export function useTranslations(book: Book, enabled: boolean) {
   const [cache, setCache] = useState<TranslationResult[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [status, setStatus] = useState<DeepSeekStatus>();
-  const [checking, setChecking] = useState(false);
+  const [config, setConfig] = useState<DeepSeekConfig>();
   const [error, setError] = useState("");
   const [job, setJob] = useState<{ done: number; total: number; blockId?: string }>();
+  const [failed, setFailed] = useState<{ blocks: ReadingBlock[]; force: boolean }>();
   const request = useRef<AbortController | undefined>(undefined);
-  const connection = useRef<AbortController | undefined>(undefined);
   const alive = useRef(false);
   useEffect(() => {
     alive.current = true;
@@ -20,31 +21,25 @@ export function useTranslations(book: Book, enabled: boolean) {
     }).catch(() => {
       if (alive.current) { setError("无法读取本地译文缓存，请检查浏览器存储。为避免重复付费，暂不发起翻译。"); }
     });
-    return () => { alive.current = false; request.current?.abort(); connection.current?.abort(); };
+    return () => { alive.current = false; request.current?.abort(); };
   }, [book.id]);
   const check = useCallback(async () => {
-    connection.current?.abort();
-    const controller = new AbortController();
-    connection.current = controller;
-    setChecking(true);
-    const timer = setTimeout(() => controller.abort(), 5000);
     try {
-      const value = await getDeepSeekStatus(controller.signal);
-      if (!alive.current || connection.current !== controller) return;
-      setStatus(value);
-      setError(value.configured ? "" : "尚未配置 DeepSeek Key：请填写电脑上的 .env.local，然后重启 npm.cmd run api。");
+      const value = await loadDeepSeekConfig();
+      if (!alive.current) return;
+      setConfig(value); setStatus(getDeepSeekStatus(value)); setError("");
     } catch {
-      if (alive.current && connection.current === controller) {
-        setStatus(undefined);
-        setError("未连接翻译服务。请在电脑另一个终端运行 npm.cmd run api，然后检查连接。已有译文可离线阅读。");
+      if (alive.current) {
+        setConfig(undefined); setStatus(undefined);
+        setError("无法读取本机翻译配置，请重新保存 API 设置。已有译文可离线阅读。");
       }
-    } finally {
-      clearTimeout(timer);
-      if (alive.current && connection.current === controller) setChecking(false);
     }
   }, []);
   useEffect(() => {
     if (enabled) void check();
+    const changed = () => { request.current?.abort(); setFailed(undefined); void check(); };
+    window.addEventListener(configChanged, changed);
+    return () => window.removeEventListener(configChanged, changed);
   }, [enabled, check]);
   const results = useMemo(() => {
     const selected: Record<string, TranslationResult> = {};
@@ -66,14 +61,14 @@ export function useTranslations(book: Book, enabled: boolean) {
     return next;
   }, [results]);
   const run = useCallback(async (blocks: ReadingBlock[], force = false) => {
-    if (request.current || !loaded || !status?.configured) return;
+    if (request.current || !loaded || !status?.configured || !config) return;
     const unique = [...new Map(blocks.map((block) => [block.id, block])).values()];
     // Cached text has no TTL. Changing the configured model alone must not spend again.
     const queue = unique.filter((block) => force || !results[block.id]);
     if (!queue.length) { setError(""); return; }
     const controller = new AbortController();
     request.current = controller;
-    setError("");
+    setError(""); setFailed(undefined);
     const completed: TranslationResult[] = [];
     const publish = () => {
       if (alive.current && completed.length) setCache((previous) => [...previous.filter((row) => !completed.some((next) => next.blockId === row.blockId && next.provider === row.provider && next.sourceRevision === row.sourceRevision)), ...completed]);
@@ -83,11 +78,14 @@ export function useTranslations(book: Book, enabled: boolean) {
         if (controller.signal.aborted) break;
         if (block.text.length > status.maxCharacters) throw new Error(`此段超过 ${status.maxCharacters} 字符，暂不自动切碎翻译，请核对原页。`);
         setJob({ done: completed.length, total: queue.length, blockId: block.id });
-        completed.push(await translateBlock(deepSeekProvider(status), book.id, block, force, controller.signal, book.parserRevision));
+        completed.push(await translateBlock(deepSeekProvider(config), book.id, block, force, controller.signal, book.parserRevision));
         if (completed.length % 3 === 0) publish();
       }
     } catch (cause) {
-      if (alive.current && !controller.signal.aborted) setError(cause instanceof Error ? cause.message : "翻译失败，请稍后重试。");
+      if (alive.current && !controller.signal.aborted) {
+        setError(cause instanceof Error ? cause.message : "翻译失败，请稍后重试。");
+        setFailed({ blocks: queue.slice(completed.length), force });
+      }
     } finally {
       if (alive.current) {
         // Publish incrementally for whole-book jobs; successfully saved work survives failure.
@@ -96,6 +94,6 @@ export function useTranslations(book: Book, enabled: boolean) {
       }
       if (request.current === controller) request.current = undefined;
     }
-  }, [book.id, book.parserRevision, loaded, status, results]);
-  return { texts, results, status, checking, loaded, error, job, check, run, cancel: () => request.current?.abort() };
+  }, [book.id, book.parserRevision, loaded, config, status, results]);
+  return { texts, results, status, loaded, error, job, run, failed, retry: () => failed ? run(failed.blocks, failed.force) : Promise.resolve(), cancel: () => request.current?.abort() };
 }

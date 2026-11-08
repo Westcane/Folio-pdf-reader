@@ -95,7 +95,7 @@
 .visible-translate.dragging { cursor: grabbing; box-shadow: 0 6px 24px #172c2225; }
 .translation-popover {
   position: absolute;
-  z-index: 10;
+  z-index: 20;
   right: 24px;
   top: 70px;
   width: min(340px, calc(100vw - 48px));
@@ -129,6 +129,7 @@
 .is-reading .settings-panel output, .is-reading .settings-panel .theme-choice { font-size: 15px; }
 .is-reading > .error-banner, .is-reading > .notice-banner, .is-reading > .update-banner { position: absolute; left: 68px; right: 16px; bottom: max(14px, env(safe-area-inset-bottom)); z-index: 15; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 6px 24px #182b2010; padding: 10px 14px; }
 @media (max-width: 600px) {
+  .is-reading > .error-banner, .is-reading > .notice-banner, .is-reading > .update-banner { left: 16px; right: 16px; bottom: max(168px, calc(env(safe-area-inset-bottom) + 156px)); }
   .paged-column { --phone-margin: clamp(14px, calc(var(--reading-margin) * 0.5), 28px); width: calc(100% - var(--phone-margin) * 2); }
   .reading-header { max-width: calc(100% - 136px); }
   .reading-capsule { padding: 0 12px; gap: 8px; }

@@ -18,11 +18,12 @@ interface Props {
   onProgress: (progress: ReadingProgress) => void;
   onState: (state: ReaderState) => void; onError: (error: unknown) => void;
   onBack: () => void; onOpenSettings: () => void;
+  onOpenApiSettings: () => void;
   onBilingual: (enabled: boolean) => void;
   settingsOpen: boolean;
 }
 const emptyPresentation = { collapsed: [] as string[] };
-export default function Reader({ book, blocks, settings, online, initialProgress, onProgress, onState, onError, onBack, onOpenSettings, onBilingual, settingsOpen }: Props) {
+export default function Reader({ book, blocks, settings, online, initialProgress, onProgress, onState, onError, onBack, onOpenSettings, onOpenApiSettings, onBilingual, settingsOpen }: Props) {
   const [panel, setPanel] = useState(false);
   const [confirmAll, setConfirmAll] = useState(false);
   const [presentation, setPresentation] = useState(emptyPresentation);
@@ -40,6 +41,7 @@ export default function Reader({ book, blocks, settings, online, initialProgress
   const flow = usePagedReader({ book, blocks, settings, initialProgress,
     translations: translation.texts, collapsed,
     presentationReady: viewReady && (!settings.bilingual || translation.loaded || !!translation.error), onProgress, onState, onError });
+  useEffect(() => { if (translation.error) setPanel(true); }, [translation.error]);
 
   useEffect(() => {
     let live = true;
@@ -104,7 +106,7 @@ export default function Reader({ book, blocks, settings, online, initialProgress
     revealBlocks(ids);
     const missing = blocks.filter((block) => ids.includes(block.id) && !translation.texts[block.id]);
     if (missing.length) {
-      if (!translation.status?.configured) setPanel(true);
+      if (!translation.status?.configured) onOpenApiSettings();
       else translate(missing);
     }
   };
@@ -122,7 +124,7 @@ export default function Reader({ book, blocks, settings, online, initialProgress
       if (settings.bilingual && !collapsed.has(id)) changeFold(id, false);
       else revealBlocks([id]);
     } else if (!translation.job && translation.loaded) {
-      if (!translation.status?.configured) setPanel(true);
+      if (!translation.status?.configured) onOpenApiSettings();
       else { revealBlocks([id]); translate([block], false); }
     }
   };
@@ -182,7 +184,9 @@ export default function Reader({ book, blocks, settings, online, initialProgress
           <p className="translation-summary" aria-live="polite">{translation.job ? `正在翻译 ${translation.job.done + 1} / ${translation.job.total} 段` : `本书已缓存 ${Object.keys(translation.results).length} 段译文`}</p>
           <p className="translation-summary">缓存不自动过期；删书或清理网站数据会移除缓存。</p>
           {translation.error && <p className="translation-error" role="alert">{translation.error}</p>}
-          <button className="quiet-link" disabled={translation.checking || !!translation.job} onClick={() => void translation.check()}>{translation.checking ? "连接中…" : "检查连接"}</button>
+          {!translation.status?.configured && <p className="translation-summary">填写自己的 API Key 后即可翻译，已有译文无需密钥。</p>}
+          {translation.failed && <button className="translation-menu-item" disabled={!canTranslate} onClick={() => { flow.capture(); void translation.retry(); }}>重试失败任务 <small>手动重试，已完成的普通翻译跳过缓存</small></button>}
+          <button className="quiet-link" onClick={() => { setPanel(false); onOpenApiSettings(); }}>API 设置</button>
           {book.status !== "ready" && <p className="translation-summary">部分原页需要校对，复杂区域的译文也应对照原 PDF。</p>}
         </section>
       )}
