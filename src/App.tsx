@@ -101,9 +101,8 @@ export default function App() {
     [],
   );
   const refreshStorage = useCallback(async () => {
-    const persisted = await navigator.storage?.persisted?.();
     const estimate = await navigator.storage?.estimate?.();
-    setStorage(`${persisted ? "浏览器已授予持久存储" : "浏览器管理的本地存储"}${estimate?.usage ? ` · 已用约 ${(estimate.usage / 1024 / 1024).toFixed(1)} MB` : ""}`);
+    setStorage(`浏览器自动保存缓存${estimate?.usage ? ` · 已用约 ${(estimate.usage / 1024 / 1024).toFixed(1)} MB` : ""}`);
   }, []);
   const openBook = useCallback(async (book: Book) => {
     let content = await db.contents.get(book.id);
@@ -245,16 +244,6 @@ export default function App() {
     setShowSettings(false);
     void db.settings.delete("lastBook").catch(reportError);
     void refreshBooks().catch(reportError);
-  };
-  const retainStorage = async () => {
-    if (!navigator.storage?.persist) {
-      setStorage("当前浏览器不支持申请保留存储，仍请保留原 PDF");
-      return;
-    }
-    try {
-      const granted = await navigator.storage.persist();
-      setStorage(granted ? "浏览器已授予持久存储，仍请保留原 PDF" : "浏览器未授予持久存储，仍可正常使用，请保留原 PDF");
-    } catch (cause) { reportError(cause); }
   };
   const deleteLocalStorage = async () => {
     if (importLock.current || clearingStorage) return;
@@ -605,7 +594,7 @@ export default function App() {
               <HardDrive size={19} />
               <div>
                 <strong>记得保留原文件</strong>
-                <p>Safari 清理网站数据可能移除书库；安装 PWA 不等于备份。</p>
+                <p>清理浏览器网站数据可能移除书库。</p>
               </div>
             </div>
           </section>
@@ -622,10 +611,9 @@ export default function App() {
           <details className="storage-details">
             <summary>{storage}</summary>
             <p>
-              书籍、译文和进度保存在当前浏览器。可以申请保留存储，减少被浏览器自动清理的机会；仍请保留原 PDF。
+              书籍、译文和阅读进度会自动保存在当前浏览器中。
             </p>
             <div className="storage-actions">
-              <button disabled={!ready || clearingStorage} onClick={() => void retainStorage()}>保留本地存储</button>
               <button className="storage-delete" disabled={!ready || clearingStorage} onClick={() => void deleteLocalStorage()}>{clearingStorage ? "正在删除…" : "删除本地存储"}</button>
             </div>
           </details>
