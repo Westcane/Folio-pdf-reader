@@ -130,3 +130,14 @@ export function writeProgress(progress: ReadingProgress): Promise<unknown> {
   pending = pending.catch(() => {}).then(() => db.progress.put(progress));
   return pending;
 }
+
+/** Clear only Folio's data, after queued progress saves. Keep the schema and app cache. */
+export function clearReaderData(): Promise<void> {
+  const clearing = pending.catch(() => {}).then(() =>
+    db.transaction("rw", db.tables, async () => {
+      await Promise.all(db.tables.map((table) => table.clear()));
+    }),
+  );
+  pending = clearing;
+  return clearing;
+}

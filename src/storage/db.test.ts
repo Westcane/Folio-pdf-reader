@@ -2,6 +2,7 @@ import "fake-indexeddb/auto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   db,
+  clearReaderData,
   deleteBook,
   normalizeSettings,
   saveImport,
@@ -28,6 +29,27 @@ afterAll(async () => {
   await db.delete();
 });
 describe("local persistence", () => {
+  it("clears all Folio tables including credentials after pending progress writes", async () => {
+    await saveImport(book, [], new Blob(["test"]));
+    await db.settings.bulkPut([{ key: "deepseek-client", value: { apiKey: "test-only" } }, { key: "lastBook", value: book.id }]);
+    await db.translations.put({ key: "t", bookId: book.id, blockId: "b", sourceRevision: "1", targetLanguage: "zh-CN", provider: "mock", text: "译文", updatedAt: 1 });
+    const saving = writeProgress({ bookId: book.id, blockId: "b", offset: 1, fraction: 0, updatedAt: 1 });
+    await clearReaderData(); await saving;
+    expect(await Promise.all(db.tables.map((table) => table.count()))).toEqual(db.tables.map(() => 0));
+    db.close(); await db.open();
+    expect(await db.books.count()).toBe(0);
+    expect(await db.settings.get("deepseek-client")).toBeUndefined();
+  });
+  it("rolls back storage clearing if any table cannot be cleared", async () => {
+    await saveImport(book, [], new Blob(["test"]));
+    await db.settings.put({ key: "reader", value: { fontSize: 24 } });
+    const fail = () => { throw new Error("Cannot clear settings"); };
+    db.settings.hook("deleting", fail);
+    try { await expect(clearReaderData()).rejects.toThrow("Cannot clear settings"); }
+    finally { db.settings.hook("deleting").unsubscribe(fail); }
+    expect(await db.books.count()).toBe(1); expect(await db.files.count()).toBe(1);
+    expect((await db.settings.get("reader"))?.value).toEqual({ fontSize: 24 });
+  });
   it("stores the source and structural data together, preserving position on reimport", async () => {
     await saveImport(book, [], new Blob(["test"]));
     await writeProgress({

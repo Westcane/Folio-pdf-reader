@@ -6,7 +6,7 @@ export function useReadingChrome(blocked: boolean) {
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const activity = useCallback(() => {
     clearTimeout(timer.current);
-    if (!blocked) timer.current = setTimeout(() => setVisible(false), 2000);
+    if (!blocked) timer.current = setTimeout(() => setVisible(false), 3500);
   }, [blocked]);
   useEffect(() => {
     if (visible) activity();

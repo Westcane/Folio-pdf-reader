@@ -25,6 +25,7 @@ import Reader, { type ReaderState } from "./reader/Reader";
 import DeepSeekSettings from "./translation/DeepSeekSettings";
 import {
   db,
+  clearReaderData,
   deleteBook,
   normalizeSettings,
   saveImport,
@@ -66,6 +67,7 @@ export default function App() {
   const [importState, setImportState] = useState<ImportState>(),
     [importing, setImporting] = useState(false);
   const [readerState, setReaderState] = useState<ReaderState>();
+  const [clearingStorage, setClearingStorage] = useState(false);
   const [online, setOnline] = useState(navigator.onLine),
     [storage, setStorage] = useState("正在检查本地存储…");
   const fileInput = useRef<HTMLInputElement>(null),
@@ -98,6 +100,11 @@ export default function App() {
       setBooks(await db.books.orderBy("importedAt").reverse().toArray()),
     [],
   );
+  const refreshStorage = useCallback(async () => {
+    const persisted = await navigator.storage?.persisted?.();
+    const estimate = await navigator.storage?.estimate?.();
+    setStorage(`${persisted ? "浏览器已授予持久存储" : "浏览器管理的本地存储"}${estimate?.usage ? ` · 已用约 ${(estimate.usage / 1024 / 1024).toFixed(1)} MB` : ""}`);
+  }, []);
   const openBook = useCallback(async (book: Book) => {
     let content = await db.contents.get(book.id);
     let selected = book;
@@ -147,11 +154,7 @@ export default function App() {
         const book = await db.books.get(last);
         if (book) await openBook(book);
       }
-      const persisted = await navigator.storage?.persisted?.();
-      const estimate = await navigator.storage?.estimate?.();
-      setStorage(
-        `${persisted ? "浏览器已授予持久存储" : "浏览器管理的本地存储"}${estimate?.usage ? ` · 已用约 ${(estimate.usage / 1024 / 1024).toFixed(1)} MB` : ""}`,
-      );
+      await refreshStorage();
     })()
       .catch(reportError)
       .finally(() => setReady(true));
@@ -162,14 +165,14 @@ export default function App() {
       window.removeEventListener("online", connection);
       window.removeEventListener("offline", connection);
     };
-  }, [openBook, refreshBooks, reportError]);
+  }, [openBook, refreshBooks, refreshStorage, reportError]);
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme;
-    if (ready)
+    if (ready && !clearingStorage)
       void db.settings
         .put({ key: "reader", value: settings })
         .catch(reportError);
-  }, [settings, ready, reportError]);
+  }, [settings, ready, clearingStorage, reportError]);
   useEffect(() => {
     const escape = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -243,6 +246,33 @@ export default function App() {
     void db.settings.delete("lastBook").catch(reportError);
     void refreshBooks().catch(reportError);
   };
+  const retainStorage = async () => {
+    if (!navigator.storage?.persist) {
+      setStorage("当前浏览器不支持申请保留存储，仍请保留原 PDF");
+      return;
+    }
+    try {
+      const granted = await navigator.storage.persist();
+      setStorage(granted ? "浏览器已授予持久存储，仍请保留原 PDF" : "浏览器未授予持久存储，仍可正常使用，请保留原 PDF");
+    } catch (cause) { reportError(cause); }
+  };
+  const deleteLocalStorage = async () => {
+    if (importLock.current || clearingStorage) return;
+    if (!window.confirm("确认删除本地存储？\n\n将清除当前浏览器中 Folio 的：\n• 全部书籍、导入的 PDF 副本和重排文字\n• 阅读进度、阅读设置和界面位置\n• 全部译文缓存\n• 已保存的 DeepSeek API Key 和 API 配置\n\n设备中的原始 PDF 文件不会删除，应用离线资源会保留。\n此操作不可撤销，之后需要重新导入书籍。\n\n是否确认删除？")) return;
+    importLock.current = true;
+    setClearingStorage(true); setShowApiSettings(false); setError(""); setNotice("");
+    try {
+      await clearReaderData();
+      let layoutCleared = true;
+      try { localStorage.removeItem("folio-floating-translation"); } catch { layoutCleared = false; }
+      progressRef.current = undefined;
+      setBooks([]); setOpened(undefined); setReaderState(undefined); setImportState(undefined);
+      setSettings({ ...defaultSettings }); setShowSettings(false);
+      setNotice(layoutCleared ? "本地书库、进度、译文和 API 配置已清除。" : "书库、进度、译文和 API 配置已清除；浏览器未允许清理按钮位置。");
+      void refreshStorage().catch(() => setStorage("本地阅读数据已清除"));
+    } catch (cause) { reportError(cause); }
+    finally { importLock.current = false; setClearingStorage(false); }
+  };
   const demo = async () => {
     try {
       const response = await fetch(
@@ -286,10 +316,10 @@ export default function App() {
               <span className="status-dot" /> LOCAL FIRST{" "}
               <span className="header-separator">/</span> 为专注而生
             </div>
-            <button className="quiet-link library-api" onClick={() => setShowApiSettings(true)}>API 设置</button>
+            <button className="quiet-link library-api" disabled={clearingStorage} onClick={() => setShowApiSettings(true)}>API 设置</button>
             <button
               className="primary-button small"
-              disabled={!ready || importing}
+              disabled={!ready || importing || clearingStorage}
               onClick={() => fileInput.current?.click()}
             >
               <Plus size={17} />
@@ -476,7 +506,7 @@ export default function App() {
             </div>
             <button
               className="import-dropzone"
-              disabled={!ready || importing}
+              disabled={!ready || importing || clearingStorage}
               onClick={() => fileInput.current?.click()}
               onDragOver={(e) => e.preventDefault()}
               onDrop={(e) => {
@@ -500,6 +530,7 @@ export default function App() {
                   <div className="book-card" key={book.id}>
                     <button
                       className="book-open"
+                      disabled={clearingStorage}
                       onClick={() => {
                         setError("");
                         void openBook(book).catch(reportError);
@@ -530,6 +561,7 @@ export default function App() {
                     </button>
                     <button
                       className="delete-book icon-button"
+                      disabled={clearingStorage}
                       title="从本机书库移除"
                       aria-label={`移除 ${book.name}`}
                       onClick={() => {
@@ -555,7 +587,7 @@ export default function App() {
               </span>
               <button
                 onClick={() => void demo()}
-                disabled={!ready || importing}
+                disabled={!ready || importing || clearingStorage}
               >
                 试读示例 <ArrowUpRight size={15} />
               </button>
@@ -590,25 +622,12 @@ export default function App() {
           <details className="storage-details">
             <summary>{storage}</summary>
             <p>
-              文档、原文件和进度使用 IndexedDB；静态资源使用 Service Worker
-              缓存。两者独立，同一浏览器、域名与端口下保存。重新导入相同文件可恢复仍在本机的进度。
+              书籍、译文和进度保存在当前浏览器。可以申请保留存储，减少被浏览器自动清理的机会；仍请保留原 PDF。
             </p>
-            <button
-              onClick={() => {
-                void navigator.storage
-                  ?.persist?.()
-                  .then((granted) =>
-                    setStorage(
-                      granted
-                        ? "浏览器已授予持久存储，仍请保留原文件"
-                        : "Safari 未授予持久存储，仍可正常阅读，请保留原文件",
-                    ),
-                  )
-                  .catch(reportError);
-              }}
-            >
-              尝试保留本地存储
-            </button>
+            <div className="storage-actions">
+              <button disabled={!ready || clearingStorage} onClick={() => void retainStorage()}>保留本地存储</button>
+              <button className="storage-delete" disabled={!ready || clearingStorage} onClick={() => void deleteLocalStorage()}>{clearingStorage ? "正在删除…" : "删除本地存储"}</button>
+            </div>
           </details>
         </main>
       )}

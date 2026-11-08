@@ -285,13 +285,17 @@
   max-width: 650px;
 }
 .storage-details button {
-  font-size: 11px;
+  font-size: 14px;
   background: none;
   border: 1px solid var(--line);
   border-radius: 6px;
   padding: 8px 12px;
   color: var(--accent);
 }
+.storage-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.storage-details button.storage-delete { color: #ad4037; border-color: currentColor; }
+.storage-details button.storage-delete:hover { background: #ad403710; }
+[data-theme="dark"] .storage-details button.storage-delete { color: #f39b90; }
 .book-list {
   display: grid;
   gap: 12px;
