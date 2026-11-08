@@ -1,0 +1,16 @@
+node_modules/
+dist/
+.reference/
+.cert/
+.cache/
+public/pdf-assets/
+public/licenses/
+test-results/
+playwright-report/
+tests/fixtures/*.pdf
+*.local
+*.log
+.env*
+!.env.example
+docs/
+next.md
