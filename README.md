@@ -1,5 +1,7 @@
 # Folio PDF 阅读器
 
+https://westcane.github.io/Folio-pdf-reader/
+
 Folio 是一款面向 iPad、安卓手机和平板，也可以在电脑浏览器使用的轻量级 PDF 阅读器。
 
 **Folio 是为满足个人阅读需求而开发的自用工具，希望能为有类似需求的人提供帮助。**
